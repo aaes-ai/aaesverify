@@ -50,3 +50,13 @@ This repository contains only what an examiner needs, copied from the closed-sou
 - `internal/types/` (shared types, only what the verifier imports)
 
 Nothing else. The producer, gateway, journal, policy, credentials, directory, audit, and connector packages are deliberately absent; the import-constraint tests prove they are not reachable from the verification package.
+
+## The rest of AAES
+
+This repository is the verification surface only; it deliberately contains nothing else. The platform itself reaches a customer through separate artifacts:
+
+- a public container image — `docker pull ghcr.io/aaes-ai/aaes:v0.2.0` — cosign-signed keyless by the release workflow, carrying the complete deployment set;
+- the TypeScript SDK on npm — `npm install @aaes-ai/sdk`;
+- the Python SDK on PyPI — `python3 -m pip install aaes-sdk` (import name `aaes`).
+
+The AAES source repository is private, so the Go SDK (`github.com/aaes-ai/aaes/sdk/go`) is fetched with repository access. Platform evaluation packages are supplied by request; see https://aaes.ai/developers/evaluation.html.
