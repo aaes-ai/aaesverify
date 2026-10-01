@@ -1,3 +1,3 @@
-module github.com/aaes-dev/aaesverify
+module github.com/aaes-ai/aaesverify
 
 go 1.27

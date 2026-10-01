@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // relabelledHead returns a copy of the fixture head carrying the log id of a
@@ -45,7 +45,7 @@ func TestPublishedHeadFromAnotherLogIsRejected(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 3)
 	foreign := relabelledHead(t, head, hash.DeriveLogID("tenant-b"))
 	doc := exportJSONL(t, entries, foreign, pub)
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestAnchorFromAnotherLogIsRejected(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 4)
 	foreign := relabelledHead(t, head, hash.DeriveLogID("tenant-b"))
 	doc := exportJSONLWithAnchors(t, entries, head, pub, []AnchorView{{Head: foreign}})
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestLegacyHeadWithoutALogIDFailsVerification(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 3)
 	legacy := relabelledHead(t, head, "")
 	doc := exportJSONL(t, entries, legacy, pub)
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}

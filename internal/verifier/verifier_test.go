@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
-	"github.com/aaes-dev/aaesverify/internal/types"
+	"github.com/aaes-ai/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/types"
 )
 
 // testPriv returns the fixed key the fixtures are signed with.
@@ -37,16 +37,16 @@ func buildLog(t *testing.T, n int) (entries []EntryView, head hash.TreeHead, pub
 	leaves = make([]string, 0, n)
 	for i := 1; i <= n; i++ {
 		e := EntryView{
-			TenantID:   tenant,
-			Sequence:   uint64(i),
-			RecordHash: fmt.Sprintf("record-%d", i),
-			IntentID:   fmt.Sprintf("intent-%d", i),
-			ActorID:    "agent-1",
-			Capability: "payments.transfer",
-			Tier:       types.R3RiskTier,
-			Allowed:    true,
-			GrantID:    fmt.Sprintf("grant-%d", i),
-			AmountUSD:  float64(i) * 3.25,
+			TenantID:    tenant,
+			Sequence:    uint64(i),
+			RecordHash:  fmt.Sprintf("record-%d", i),
+			IntentID:    fmt.Sprintf("intent-%d", i),
+			ActorID:     "agent-1",
+			Capability:  "payments.transfer",
+			Tier:        types.R3RiskTier,
+			Allowed:     true,
+			GrantID:     fmt.Sprintf("grant-%d", i),
+			AmountMinor: types.USDM(float64(i) * 3.25).Minor, AmountCurrency: "USD",
 			OccurredAt: base.Add(time.Duration(i) * time.Second),
 			LinkedAt:   base.Add(time.Duration(i) * time.Second),
 		}
@@ -92,7 +92,7 @@ func TestVerifyChainRejectsEveryTamper(t *testing.T) {
 		want   error
 	}{
 		{"amount changed", func(e []EntryView, h hash.TreeHead) ([]EntryView, hash.TreeHead) {
-			e[4].AmountUSD += 0.01
+			e[4].AmountMinor++
 			return e, h
 		}, ErrChain},
 		{"record hash changed", func(e []EntryView, h hash.TreeHead) ([]EntryView, hash.TreeHead) {
@@ -241,7 +241,7 @@ func TestParseKeys(t *testing.T) {
 func TestVerifyExportReadsTheDocumentedSchema(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 6)
 	doc := exportJSONL(t, entries, head, pub)
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExportReader: %v", err)
 	}
@@ -252,11 +252,11 @@ func TestVerifyExportReadsTheDocumentedSchema(t *testing.T) {
 		t.Fatalf("result: %+v", res)
 	}
 
-	tampered := strings.Replace(doc, "\"amount_usd\":19.5", "\"amount_usd\":99.5", 1)
+	tampered := strings.Replace(doc, "\"amount_minor\":1950", "\"amount_minor\":9950", 1)
 	if tampered == doc {
 		t.Fatal("test fixture did not contain the expected amount")
 	}
-	res, err = VerifyExportReader(strings.NewReader(tampered), pub)
+	res, err = VerifyExportReaderWithOptions(strings.NewReader(tampered), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestEmbeddedKeyMismatchIsAnError(t *testing.T) {
 		otherSeed[i] = 42
 	}
 	other := ed25519.NewKeyFromSeed(otherSeed).Public().(ed25519.PublicKey)
-	res, err := VerifyExportReader(strings.NewReader(doc), other)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), other, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestEmbeddedKeyMismatchIsAnError(t *testing.T) {
 	}
 }
 
-// exportJSONL renders the documented aaes.export/v1 document from in-memory
+// exportJSONL renders the current aaes.export document from in-memory
 // values, independently of the producer.
 func exportJSONL(t *testing.T, entries []EntryView, head hash.TreeHead, pub ed25519.PublicKey) string {
 	t.Helper()

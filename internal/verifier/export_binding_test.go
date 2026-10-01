@@ -16,7 +16,7 @@ func TestExportHeaderMustAgreeWithTheSignedEntries(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 4)
 	doc := exportJSONL(t, entries, head, pub)
 
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExportReader: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestExportHeaderMustAgreeWithTheSignedEntries(t *testing.T) {
 	if relabelled == doc {
 		t.Fatal("the fixture did not contain the expected tenant id, so this test would prove nothing")
 	}
-	res, err = VerifyExportReader(strings.NewReader(relabelled), pub)
+	res, err = VerifyExportReaderWithOptions(strings.NewReader(relabelled), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExportReader: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestNoResolvableKeyIsNotAPassingSignatureCheck(t *testing.T) {
 	if noKey == doc {
 		t.Fatal("the fixture did not contain an embedded public key, so this test would prove nothing")
 	}
-	res, err := VerifyExportReader(strings.NewReader(noKey), nil)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(noKey), nil, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExportReader: %v", err)
 	}

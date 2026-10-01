@@ -1,62 +1,95 @@
-# aaesverify: the offline AAES evidence verifier
+# aaesverify
 
-`aaesverify` checks an AAES evidence export (`aaes.export/v1`) for integrity, fully offline. It runs locally without contacting AAES. It is released under the Apache License 2.0; see `LICENSE`.
+The public, Apache-2.0 offline reader for **`aaes.export/v2`** evidence.
+It runs on your machine without contacting AAES or any network service.
+The current supported software release is **v0.2.0**. Earlier export formats
+are retired and rejected. The software release number and wire-format number
+are independent.
 
-## What it verifies
+## Download or build
 
-- Every entry's canonical bytes hash to the leaf the export claims.
-- The hash chain links genesis to head in sequence order; the first disagreement is reported by position.
-- The recomputed Merkle root over the exported leaves equals the root in the signed tree head.
-- The tree head signature verifies under an Ed25519 public key supplied out of band; a head whose `log_id` is empty or does not match the export's tenant fails closed.
-- Every anchor commits to a prefix of the same tree with a valid signature.
-- Independence quantities are reported separately from integrity: how many external timestamps verified against caller-supplied TSA roots, and how many independent witnesses countersigned against caller-pinned witness keys.
+Download the binary for your OS and architecture from
+[the v0.2.0 release](https://github.com/aaes-ai/aaesverify/releases/tag/v0.2.0).
+The release contains macOS, Linux and Windows builds for amd64 and arm64,
+`SHA256SUMS.txt`, and build information tied to the tagged source revision.
+Checksums detect changed bytes. Authenticate the publisher and signing key
+through channels you trust before relying on them.
 
-## What it does not establish
-
-A valid signature establishes that the holder of the supplied key signed the head. A trusted timestamp can provide evidence about when a commitment existed, and a pinned witness can attest to a commitment under its witness policy. Neither, separately or together, proves capture completeness or excludes conflicting histories; detecting equivocation additionally requires comparison of commitments and a defined consistency and witness policy. `--require-independent` is a verifier policy gate, not proof that these broader properties hold: it fails the export unless at least one independent witness or at least one independent timestamp verifies against caller-supplied trust material. Verification also says nothing about truth of recorded inputs, correctness of a recorded decision, or downstream execution.
-
-## Design constraint that narrows the trust surface
-
-The verification package may import only the Go standard library and two small internal packages (hashing and shared types). It never imports the producer. The constraint is enforced by tests that walk the package source and its transitive closure. A verifier that shares code with the producer shares its bugs and its incentives. The same argument applies to the shared hashing and type code the restriction permits: the constraint reduces common-mode defects, but it does not make the verifier a fully independent implementation. A second, independently written reader is the stronger check, and the published specification (https://aaes.ai/spec.html) exists to make one possible.
-
-## Build and run
+To build the tagged source with Go 1.27 or later:
 
 ```sh
-go build -o aaesverify ./cmd/aaesverify
+git clone --branch v0.2.0 https://github.com/aaes-ai/aaesverify.git
+cd aaesverify
+go test ./...
+go build -trimpath -ldflags="-X main.version=v0.2.0" -o aaesverify ./cmd/aaesverify
+./aaesverify --version
+```
+
+## Verify
+
+```sh
 ./aaesverify --export export.jsonl --pubkey key.pub
 ```
 
-Optional flags: `--tsa-roots <roots.pem>`, `--witness-trust <witnesses.json>`, `--require-independent`, and `--json`. Verification is offline, but trust material must be supplied separately: the signing public key and, when applicable, TSA roots and pinned witness keys. Embedded keys do not establish their own trust.
+Obtain the signing public key separately through a channel trusted for the
+deployment under review. A key embedded in an export cannot authenticate itself.
+The public synthetic sample is in `cmd/aaesverify/testdata/sample-export.jsonl`:
 
-Exit 0 and `result: PASS` mean the integrity checks passed against the supplied key; it is not an assurance verdict.
+```sh
+./aaesverify --export cmd/aaesverify/testdata/sample-export.jsonl \
+  --pubkey cmd/aaesverify/testdata/sample-pubkey.txt --json
+```
 
-## Demonstration vectors
+The sample has 16 entries and no independent witness or timestamp. Its key is
+public demonstration material, not a trusted production key.
 
-The public sample pack at https://aaes.ai/library/verification.html provides:
+Optional flags: `--tsa-roots`, `--witness-trust`, `--require-independent`,
+`--allow-pre-anchor`, `--json`, and `--version`. `--require-independent`
+rejects evidence without a witness or timestamp verified against caller-supplied
+trust material. It does not configure those services. A header-only, unsigned
+`pre_anchor` declaration requires explicit `--allow-pre-anchor` opt-in.
+Exports are bounded to 1 GiB and lines to 4 MiB.
 
-- `sample-export.jsonl`: a synthetic export containing 16 entry lines, which must pass.
-- `tamper-demo.sh`: flips one byte in a copy and requires the verifier to refuse it. These are demonstration vectors, not a complete conformance suite; diagnostic expectations must match the tested verifier version.
-- `SHA256SUMS.txt`: checksums for every file.
+Exit codes: 0 means the integrity checks passed, 1 means refusal or a failed
+check, and 2 means usage or trust-file loading failure.
 
-The format specification is at https://aaes.ai/spec.html, with machine-readable JSON Schemas under https://aaes.ai/spec/v1/.
+## What it checks
 
-## Source layout
+The reader recomputes canonical entry hashes, the chain, the Merkle root and
+Ed25519 head signatures. Anchors must commit to prefixes of the same history.
+Timestamp and witness independence is reported separately. Signed log identity
+must match the tenant under review. A receipt must bind its entry, intent,
+grant and record identity to its leaf.
 
-This repository contains only what an examiner needs, copied from the closed-source AAES monorepo without history:
+These checks do not establish capture completeness, input truth, correct policy
+decisions, successful provider execution or the absence of conflicting histories.
+Compare separately retained commitments under a defined consistency and witness
+policy to investigate equivocation. A PASS is an integrity result, not an
+assurance or certification verdict.
 
-- `cmd/aaesverify/` (the binary)
-- `internal/verifier/` (verification logic)
-- `internal/hash/` (canonical JSON, SHA-256, Merkle)
-- `internal/types/` (shared types, only what the verifier imports)
+## Open format and other implementations
 
-Nothing else. The producer, gateway, journal, policy, credentials, directory, audit, and connector packages are deliberately absent; the import-constraint tests prove they are not reachable from the verification package.
+[SPEC.md](SPEC.md) describes the implemented verification profile. The public
+[JSON Schema](schemas/export.schema.json) documents the v2 envelope. The
+[manifest schema](schemas/evidence-pack-manifest.schema.json) describes the
+separate pack inventory. Both ship under this repository's Apache-2.0 license.
+This is an openly documented implementation profile, not a claim of adoption
+as an ISO, IETF or other external standard. Independent readers and conformance
+contributions are welcome through [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## The rest of AAES
+The verifier imports only the Go standard library, `internal/hash` and the
+small `internal/types` subset. Import-closure tests enforce this boundary.
+Sharing hash/types code with the producer creates common-mode risk. This reader
+is not an independently written second implementation.
 
-This repository is the verification surface only; it deliberately contains nothing else. The platform itself reaches a customer through separate artifacts:
+`aaes.records/v1` and `aaes.evidence-pack/1` are separate companion formats,
+not legacy exports. This slim reader has no `--records` flag and does not
+perform platform sidecar binding.
 
-- a public container image — `docker pull ghcr.io/aaes-ai/aaes:v0.2.0` — cosign-signed keyless by the release workflow, carrying the complete deployment set;
-- the TypeScript SDK on npm — `npm install @aaes-ai/sdk`;
-- the Python SDK on PyPI — `python3 -m pip install aaes-sdk` (import name `aaes`).
+## License and release policy
 
-The AAES source repository is private, so the Go SDK (`github.com/aaes-ai/aaes/sdk/go`) is fetched with repository access. Platform evaluation packages are supplied by request; see https://aaes.ai/developers/evaluation.html.
+Source and release binaries are Apache-2.0 under [LICENSE](LICENSE). They do not
+require an AAES evaluation agreement. The AAES platform is distributed separately.
+Only the current export format and current verifier release are supported.
+Published Git history remains a record of earlier source releases.
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.

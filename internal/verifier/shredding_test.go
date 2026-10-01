@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // shreddedLog rewrites entries 1..nProtected of a three-entry fixture log to
@@ -65,7 +65,7 @@ func rechain(t *testing.T, entries []EntryView) {
 
 func TestShreddedExportVerifiesAndReportsUnreadable(t *testing.T) {
 	path := shreddedLog(t, 2)
-	res, err := VerifyExport(path, nil)
+	res, err := VerifyExportWithOptions(path, nil, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExport: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestUnprotectedExportReportsNoShredding(t *testing.T) {
 	if err := os.WriteFile(path, []byte(exportJSONL(t, entries, head, pub)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := VerifyExport(path, nil)
+	res, err := VerifyExportWithOptions(path, nil, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExport: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestTamperedProtectedFieldFailsTheChain(t *testing.T) {
 	if err := os.WriteFile(tampered, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := VerifyExport(tampered, nil)
+	res, err := VerifyExportWithOptions(tampered, nil, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatalf("VerifyExport: %v", err)
 	}

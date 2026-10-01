@@ -11,7 +11,7 @@
 // outside the IEEE-754 53-bit range stay distinct. Native Go float64 values still
 // use binary64 formatting because they are already rounded.
 //
-// LegacyCanonicalJSON / LegacyHashObject freeze the pre-exact behaviour
+// LegacyCanonicalJSON / LegacyHashObject freeze the pre-exact behavior
 // (json.Unmarshal into float64, then the finite-float formatter). They exist
 // only so historical v1 journal records can be re-derived; new seals and v2
 // verification use CanonicalJSON.

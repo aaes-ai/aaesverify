@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -12,23 +13,37 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aaes-dev/aaesverify/internal/verifier"
+	"github.com/aaes-ai/aaesverify/internal/verifier"
 )
+
+// version and revision are injected by tagged release builds.
+var version = "dev"
+var revision = "unknown"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
 	fs := flag.NewFlagSet("aaesverify", flag.ContinueOnError)
+	showVersion := fs.Bool("version", false, "print verifier release, source revision and supported export schema")
 	exportPath := fs.String("export", "", "exported JSONL log to verify")
 	pubPath := fs.String("pubkey", "", "Ed25519 public key file (hex or base64); omit to use the key embedded in the export")
 	tsaRootsPath := fs.String("tsa-roots", "", "PEM bundle of TSA trust roots; without this, timestamps are checked but independence is not claimed")
 	witnessTrustPath := fs.String("witness-trust", "", "JSON object mapping trusted witness IDs to hex/base64 public keys obtained independently of the export")
 	requireIndependent := fs.Bool("require-independent", false, "require a countersignature or timestamp verified against supplied witness keys or TSA roots")
+	allowPreAnchor := fs.Bool("allow-pre-anchor", false, "accept an export that declares pre_anchor when the head signature does not cover that flag")
 	jsonOnly := fs.Bool("json", false, "print only the machine-readable JSON summary")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
+		return 2
+	}
+	if *showVersion {
+		fmt.Printf("aaesverify %s (%s), export schema %s\n", version, revision, verifier.ExportSchema)
+		return 0
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "aaesverify: unexpected positional arguments")
 		return 2
 	}
 	if *exportPath == "" {
@@ -60,21 +75,36 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 		return 2
 	}
-	res, err := verifier.VerifyExportWithOptions(*exportPath, pubKey, verifier.VerifyOptions{
-		TSARoots: tsaRoots, TrustedWitnessKeys: witnessKeys, RequireIndependent: *requireIndependent,
-	})
+	normalized, err := normalizeExportFile(*exportPath)
 	if err != nil {
-		if res != nil {
-			printVerifyResult(res, *jsonOnly)
+		res := &verifier.Result{Path: *exportPath, OK: false, Errors: []string{err.Error()}}
+		if perr := printVerifyResult(res, *jsonOnly); perr != nil {
+			fmt.Fprintf(os.Stderr, "aaesverify: %v\n", perr)
 		}
 		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 		return 1
 	}
-	printVerifyResult(res, *jsonOnly)
+	res := verifier.VerifyExportReaderResult(bytes.NewReader(normalized), pubKey, verifier.VerifyOptions{
+		TSARoots: tsaRoots, TrustedWitnessKeys: witnessKeys, RequireIndependent: *requireIndependent, AllowPreAnchor: *allowPreAnchor,
+	})
+	res.Path = *exportPath
+	if err := printVerifyResult(res, *jsonOnly); err != nil {
+		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
+		return 1
+	}
 	if !res.OK {
 		return 1
 	}
 	return 0
+}
+
+func normalizeExportFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open export: %w", err)
+	}
+	defer f.Close()
+	return verifier.NormalizeExportReader(f)
 }
 
 func loadTSARoots(path string) (*x509.CertPool, error) {
@@ -117,19 +147,16 @@ func loadWitnessTrust(path string) (map[string][]byte, error) {
 	return keys, nil
 }
 
-func printVerifyResult(res *verifier.Result, jsonOnly bool) {
+func printVerifyResult(res *verifier.Result, jsonOnly bool) error {
 	if !jsonOnly {
 		fmt.Println(renderVerify(res))
 	}
 	b, err := verifier.MarshalResult(res)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "aaesverify: marshal result: %v\n", err)
-		return
-	}
 	if !jsonOnly {
 		fmt.Println("--- json ---")
 	}
 	fmt.Println(string(b))
+	return err
 }
 
 func renderVerify(res *verifier.Result) string {

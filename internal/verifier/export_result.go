@@ -66,7 +66,7 @@ type GapView struct {
 	ToSequence        uint64    `json:"to_sequence"`
 	TombstoneSequence uint64    `json:"tombstone_sequence"`
 	Reason            string    `json:"reason"`
-	AuthorisedBy      string    `json:"authorised_by"`
+	AuthorizedBy      string    `json:"authorised_by"`
 	PolicyID          string    `json:"policy_id,omitempty"`
 	RemovedAt         time.Time `json:"removed_at"`
 }
@@ -81,5 +81,18 @@ func (r *Result) addError(format string, args ...any) {
 	}
 }
 
-// MarshalResult is a convenience for callers that print a Result as JSON.
-func MarshalResult(r *Result) ([]byte, error) { return json.MarshalIndent(r, "", "  ") }
+// resultMarshalIndent is the JSON encoder MarshalResult uses. Tests replace it
+// to exercise the fallback path; production always uses encoding/json.
+var resultMarshalIndent = json.MarshalIndent
+
+// MarshalResult returns r as indented JSON. Result fields are all JSON-native;
+// encoding fails only when tests inject a failing marshaler. That path returns
+// a closed-form refusal document together with a non-nil error so callers can
+// exit non-zero.
+func MarshalResult(r *Result) ([]byte, error) {
+	b, err := resultMarshalIndent(r, "", "  ")
+	if err != nil {
+		return []byte("{\n  \"ok\": false,\n  \"errors\": [\n    \"internal: result encoding failed\"\n  ]\n}"), fmt.Errorf("verifier: result encoding failed: %w", err)
+	}
+	return b, nil
+}

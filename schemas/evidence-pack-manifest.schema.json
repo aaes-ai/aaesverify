@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aaes.ai/spec/v1/evidence-pack-manifest.schema.json",
+  "title": "AAES evidence pack manifest (aaes.evidence-pack/1)",
+  "description": "The examiner index of one AAES evidence pack directory. Specification: https://aaes.ai/spec.html",
+  "type": "object",
+  "required": [
+    "schema",
+    "tenant_id",
+    "export_schema",
+    "records_schema",
+    "population",
+    "does_not_cover",
+    "files"
+  ],
+  "properties": {
+    "schema": {
+      "const": "aaes.evidence-pack/1"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "export_schema": {
+      "enum": [
+        "aaes.export/v2"
+      ],
+      "description": "Schema of the bound export: only aaes.export/v2 is supported. The manifest retains its independently versioned aaes.evidence-pack/1 identifier."
+    },
+    "records_schema": {
+      "const": "aaes.records/v1"
+    },
+    "population": {
+      "type": "string",
+      "description": "Plain-language statement of what the pack is evidence for; narrower than the whole agent estate by design."
+    },
+    "does_not_cover": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Explicit exclusions from the pack's evidentiary scope; every pack carries them."
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "verifier_binary": {
+      "type": "string",
+      "description": "Optional, but required together with verifier_sha256 when a verifier binary is bundled. A checksum stored beside a binary does not independently authenticate it."
+    },
+    "verifier_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Optional, but required together with verifier_binary."
+    }
+  },
+  "dependentRequired": {
+    "verifier_binary": [
+      "verifier_sha256"
+    ],
+    "verifier_sha256": [
+      "verifier_binary"
+    ]
+  },
+  "additionalProperties": false
+}

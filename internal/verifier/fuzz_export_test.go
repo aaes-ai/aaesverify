@@ -12,7 +12,7 @@ import (
 // invariants under test:
 //
 //   - no input panics, however malformed;
-//   - every parse failure wraps ErrMalformed, so a caller can tell a corrupt
+//   - every parse failure wraps ErrMalformed or ErrSchema, so a caller can tell a corrupt
 //     export from a verification failure by one errors.Is;
 //   - a parse that succeeds has read a header line (the parser refuses a
 //     headerless stream rather than returning an empty export).
@@ -28,12 +28,12 @@ func FuzzLoadExportReader(f *testing.F) {
 	f.Add([]byte(`{"schema":"aaes/export/1"}`))                 // missing the type discriminator
 	f.Add([]byte(header + "\n" + header + "\n"))                // duplicate header
 	f.Add([]byte(`[1,2,3]`))                                    // wrong-typed: array
-	f.Add([]byte(strings.Repeat("x", maxLineBytes+1) + "\n"))   // oversized line
+	f.Add([]byte(strings.Repeat("x", MaxLineBytes+1) + "\n"))   // oversized line
 	f.Fuzz(func(t *testing.T, data []byte) {
 		exp, err := LoadExportReader(bytes.NewReader(data))
 		if err != nil {
-			if !errors.Is(err, ErrMalformed) {
-				t.Fatalf("a parse failure must wrap ErrMalformed, got: %v", err)
+			if !errors.Is(err, ErrMalformed) && !errors.Is(err, ErrSchema) {
+				t.Fatalf("a parse failure must wrap ErrMalformed or ErrSchema, got: %v", err)
 			}
 			return
 		}
