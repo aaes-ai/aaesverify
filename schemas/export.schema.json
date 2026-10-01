@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aaes.ai/spec/v2/export.schema.json",
+  "title": "AAES evidence export line (aaes.export/v2)",
+  "description": "One line of an AAES evidence export. An export is a UTF-8 JSON Lines file; every line is exactly one of header, entry, or anchor, and the file must start with exactly one header line. This schema describes JSON structure only: it cannot enforce file order, cross-line relationships, hashes, or cryptographic validity. Specification: https://aaes.ai/spec.html",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/header"
+    },
+    {
+      "$ref": "#/$defs/entry"
+    },
+    {
+      "$ref": "#/$defs/anchor"
+    }
+  ],
+  "$defs": {
+    "treeHead": {
+      "type": "object",
+      "required": [
+        "log_id",
+        "index",
+        "root_hash",
+        "tree_size",
+        "signed_at",
+        "signature"
+      ],
+      "properties": {
+        "log_id": {
+          "type": "string",
+          "pattern": "^aaes/log-id/1/",
+          "description": "Derived from the tenant id by a domain-separated SHA-256 derivation; heads without it fail closed as legacy material."
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tree_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "signed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pre_anchor": {
+          "type": "boolean",
+          "description": "When true, commits the signed head to an export taken before the first anchor interval. Current writers omit this field when false. An older head without this commitment requires explicit verifier opt-in when the export header alone declares pre_anchor."
+        },
+        "signature": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Ed25519 signature over the canonical JSON of the head with this field omitted. Base64 decoding and the 64-byte decoded length require separate checks; Draft 2020-12 treats contentEncoding as an annotation."
+        }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "object",
+      "required": [
+        "authority",
+        "digest",
+        "time"
+      ],
+      "properties": {
+        "authority": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "token": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "noop": {
+          "type": "boolean",
+          "description": "True when the timestamp is a placeholder; a noop timestamp is not third-party attestation."
+        },
+        "verified": {
+          "type": "string",
+          "description": "Exporter-recorded metadata, not a verification result; independent checks happen under reviewer-supplied trust roots."
+        }
+      },
+      "additionalProperties": false
+    },
+    "witness": {
+      "type": "object",
+      "required": [
+        "witness_id",
+        "signature",
+        "signed_at"
+      ],
+      "properties": {
+        "witness_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "public_key": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Embedded for convenience; an embedded key does not establish trust."
+        },
+        "signature": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "signed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "key_holder": {
+          "type": "string",
+          "description": "Informational custody declaration only; independent verification requires a witness identity pinned by the caller."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tombstone": {
+      "type": "object",
+      "required": [
+        "from_sequence",
+        "to_sequence",
+        "reason",
+        "authorised_by",
+        "removed_at"
+      ],
+      "properties": {
+        "from_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "to_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "authorised_by": {
+          "type": "string",
+          "description": "Attribution field; a recorded value is not proof the deletion was authorized."
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "receipt_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "header": {
+      "type": "object",
+      "required": [
+        "type",
+        "schema",
+        "log_id",
+        "tenant_id",
+        "exported_at",
+        "entry_count",
+        "head",
+        "public_key",
+        "signing_key_id",
+        "signature_algorithm"
+      ],
+      "properties": {
+        "type": {
+          "const": "header"
+        },
+        "schema": {
+          "const": "aaes.export/v2"
+        },
+        "log_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identity of the log this export covers."
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exported_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head": {
+          "$ref": "#/$defs/treeHead"
+        },
+        "public_key": {
+          "type": "string",
+          "description": "Ed25519 public key for head verification; a verifier still requires the key out of band and fails closed on mismatch."
+        },
+        "signing_key_id": {
+          "type": "string",
+          "description": "Identifies the key that signed the head (for example ed25519-2d7f4034617bfe2e). An identifier does not establish trust."
+        },
+        "signature_algorithm": {
+          "type": "string",
+          "description": "Signature algorithm for the head (currently ed25519)."
+        },
+        "pre_anchor": {
+          "type": "boolean",
+          "description": "Honesty flag for an export written before the first anchor interval; an anchorless export passes only when this is true."
+        }
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "type",
+        "tenant_id",
+        "sequence",
+        "record_hash",
+        "intent_id",
+        "actor_id",
+        "capability",
+        "tier",
+        "allowed",
+        "grant_id",
+        "occurred_at",
+        "linked_at",
+        "chain_hash",
+        "leaf"
+      ],
+      "properties": {
+        "type": {
+          "const": "entry"
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "intent_id": {
+          "type": "string"
+        },
+        "actor_id": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "tier": {
+          "type": "integer",
+          "description": "Risk tier assigned to the capability."
+        },
+        "allowed": {
+          "type": "boolean",
+          "description": "The authorization decision; refusals are first-class entries."
+        },
+        "grant_id": {
+          "type": "string",
+          "description": "Authorization material, not proof of execution; empty when no grant was issued."
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "linked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "tombstone": {
+          "$ref": "#/$defs/tombstone"
+        },
+        "chain_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Exporter's claim; verifiers recompute it."
+        },
+        "leaf": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 hex of the canonical entry preimage; verifiers recompute it."
+        },
+        "amount_minor": {
+          "type": "integer",
+          "description": "Estimated cost committed at admission, in integer minor units of amount_currency; omitted when no cost was declared. Not a settled charge."
+        },
+        "amount_currency": {
+          "type": "string",
+          "description": "ISO 4217 currency of amount_minor; omitted when no cost was declared."
+        }
+      },
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "amount_usd"
+        ]
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "required": [
+        "type",
+        "head"
+      ],
+      "properties": {
+        "type": {
+          "const": "anchor"
+        },
+        "head": {
+          "$ref": "#/$defs/treeHead"
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Identifies the signing key; recorded by current exports, absent only in exports written before key custody existed."
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Signature algorithm; recorded by current exports."
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "witnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/witness"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

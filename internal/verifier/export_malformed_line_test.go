@@ -54,7 +54,7 @@ func TestLoadExportRefusesMalformedLines(t *testing.T) {
 }
 
 func TestDecodeHelpersRefuseBrokenJSON(t *testing.T) {
-	if _, err := decodeHeaderLine([]byte(`{`), &ExportFile{}, false, 1); err == nil {
+	if _, err := decodeHeaderLine([]byte(`{`), false, 1); err == nil {
 		t.Fatal("decodeHeaderLine must refuse broken JSON")
 	}
 	if _, err := decodeAnchorLine([]byte(`{`), 1); err == nil {

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +129,33 @@ func TestCurrentSchemaRefusesLegacyAmount(t *testing.T) {
 	raw := `{"type":"entry","amount_usd":0,"amount_minor":100,"amount_currency":"USD"}`
 	if _, err := decodeEntryLine([]byte(raw), ExportSchemaV2, 2); err == nil || !strings.Contains(err.Error(), "legacy amount_usd") {
 		t.Fatalf("mixed amount layout accepted: %v", err)
+	}
+}
+
+func TestExportRefusesDataBeforeHeader(t *testing.T) {
+	for _, kind := range []string{"entry", "anchor"} {
+		raw := `{"type":"` + kind + `"}` + "\n" + `{"type":"header","schema":"aaes.export/v2"}` + "\n"
+		_, err := LoadExportReader(strings.NewReader(raw))
+		if !errors.Is(err, ErrMalformed) || !strings.Contains(err.Error(), "header must be the first line") {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+}
+
+func TestCurrentEntryRefusesInvalidFieldTypes(t *testing.T) {
+	// A syntactically valid JSON object must not default a wrongly typed amount.
+	_, err := decodeEntryLine([]byte(`{"type":"entry","amount_minor":"100"}`), ExportSchemaV2, 2)
+	if !errors.Is(err, ErrMalformed) {
+		t.Fatalf("invalid amount type accepted: %v", err)
+	}
+}
+
+func TestRetiredHeaderWithoutEntriesRefused(t *testing.T) {
+	for _, schema := range []string{"aaes.export/v0", "aaes.export/v1"} {
+		raw := `{"type":"header","schema":"` + schema + `","tenant_id":"test","entry_count":0}` + "\n"
+		res := VerifyExportReaderResult(strings.NewReader(raw), nil, VerifyOptions{})
+		if res.OK || !strings.Contains(strings.Join(res.Errors, " "), "unsupported export schema") {
+			t.Fatalf("%s: %+v", schema, res)
+		}
 	}
 }

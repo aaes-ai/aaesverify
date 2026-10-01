@@ -149,7 +149,7 @@ func LoadExportReader(r io.Reader) (*ExportFile, error) {
 		}
 		switch probe.Type {
 		case lineHeader:
-			hdr, err := decodeHeaderLine(raw, exp, sawHeader, lineNo)
+			hdr, err := decodeHeaderLine(raw, sawHeader, lineNo)
 			if err != nil {
 				return nil, err
 			}
@@ -165,6 +165,9 @@ func LoadExportReader(r io.Reader) (*ExportFile, error) {
 			}
 			exp.Entries = append(exp.Entries, entry)
 		case lineAnchor:
+			if !sawHeader {
+				return nil, fmt.Errorf("%w: line %d: header must be the first line", ErrMalformed, lineNo)
+			}
 			a, err := decodeAnchorLine(raw, lineNo)
 			if err != nil {
 				return nil, err
@@ -185,12 +188,9 @@ func LoadExportReader(r io.Reader) (*ExportFile, error) {
 	return exp, nil
 }
 
-func decodeHeaderLine(raw []byte, exp *ExportFile, sawHeader bool, lineNo int) (HeaderView, error) {
+func decodeHeaderLine(raw []byte, sawHeader bool, lineNo int) (HeaderView, error) {
 	if sawHeader {
 		return HeaderView{}, fmt.Errorf("%w: line %d: duplicate header", ErrMalformed, lineNo)
-	}
-	if len(exp.Entries) > 0 || len(exp.Anchors) > 0 {
-		return HeaderView{}, fmt.Errorf("%w: line %d: header must be the first line", ErrMalformed, lineNo)
 	}
 	var line exportLine
 	if err := json.Unmarshal(raw, &line); err != nil {

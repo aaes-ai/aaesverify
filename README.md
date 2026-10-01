@@ -70,7 +70,9 @@ assurance or certification verdict.
 ## Open format and other implementations
 
 [SPEC.md](SPEC.md) describes the implemented verification profile. The public
-[JSON Schema](https://aaes.ai/spec/v2/export.schema.json) documents the v2 envelope.
+[JSON Schema](schemas/export.schema.json) documents the v2 envelope. The
+[manifest schema](schemas/evidence-pack-manifest.schema.json) describes the
+separate pack inventory. Both ship under this repository's Apache-2.0 license.
 This is an openly documented implementation profile, not a claim of adoption
 as an ISO, IETF or other external standard. Independent readers and conformance
 contributions are welcome through [CONTRIBUTING.md](CONTRIBUTING.md).

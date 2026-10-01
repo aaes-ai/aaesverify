@@ -696,8 +696,9 @@ The synthetic sample's publicly reproducible key is not a production trust root.
 
 Exit codes: 0 means integrity passed (including gap or shredded-field warnings);
 1 means refusal or a failed check, including an unsatisfied independence policy;
-2 means usage or trust-file loading failure. The public CLI requires `--pubkey`;
-it never treats the embedded export key as its own trust authority. Its single
+2 means usage or trust-file loading failure. Omitting `--pubkey` uses the embedded key and prints an internal-consistency
+warning. That key cannot authenticate its own origin; supply `--pubkey` from a
+separately trusted channel for deployment evidence. Its single
 signing-key CLI fails closed on rotated-key history requiring another key.
 Receipt verification is a library operation. Sidecar-to-record binding and
 operator proof/inspection commands belong to the separate AAES platform tools.
