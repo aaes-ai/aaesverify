@@ -713,7 +713,7 @@ operator proof/inspection commands belong to the separate AAES platform tools.
 | Head payload and signature | `internal/verifier/chain.go` |
 | Export parse and verification | `internal/verifier/export.go`, `export_verify.go`, `export_anchor.go` |
 | Gaps and shredding reports | `internal/verifier/gaps.go`, `shredding.go` |
-| RFC 3161 token checks | `internal/verifier/timestamp.go`, `rfc3161_verify.go` |
+| RFC 3161 token checks | `internal/verifier/timestamp.go`, `internal/verifier/timestamp_cms.go` |
 | Witness pinning and independence | `internal/verifier/witness_identity.go`, `independence.go` |
 | CLI and trust-file parsing | `cmd/aaesverify/main.go` |
 
