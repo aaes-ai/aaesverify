@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // verifyEvidence collects the cross-anchor tallies the honesty warnings need:

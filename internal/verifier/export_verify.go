@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // VerifyExport verifies an exported log file. The returned error is non-nil
@@ -136,8 +136,8 @@ func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 // declared entry count, the tenant agreement and the head's log id. It returns
 // the log id every signed head in this export must name.
 func checkHeader(exp *ExportFile, res *Result) string {
-	if exp.Header.Schema != ExportSchema {
-		res.addError("unsupported export schema %q, want %q", exp.Header.Schema, ExportSchema)
+	if exp.Header.Schema != ExportSchemaV2 {
+		res.addError("unsupported export schema %q, want %q; re-export with the current writer", exp.Header.Schema, ExportSchemaV2)
 	}
 	if uint64(len(exp.Entries)) != exp.Header.EntryCount {
 		res.addError("header declares %d entries, file contains %d", exp.Header.EntryCount, len(exp.Entries))
@@ -166,6 +166,12 @@ func checkHeader(exp *ExportFile, res *Result) string {
 	wantLogID := hash.DeriveLogID(exp.Header.TenantID)
 	if err := checkHeadLogID(exp.Header.Head, wantLogID); err != nil {
 		res.addError("published head: %v", err)
+	}
+	// A signed pre_anchor on the head must also appear on the header. The
+	// reverse (header flag without a signed head field) is the older shape
+	// that still needs --allow-pre-anchor.
+	if exp.Header.Head.PreAnchor && !exp.Header.PreAnchor {
+		res.addError("signed head declares pre_anchor but the export header does not")
 	}
 	return wantLogID
 }

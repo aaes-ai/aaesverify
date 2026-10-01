@@ -22,12 +22,17 @@ type TreeHead struct {
 	// The tag deliberately has no omitempty: log_id is always present in the
 	// canonical bytes, so removing it is a visible signature break rather
 	// than a quiet return to the legacy encoding.
-	LogID     string    `json:"log_id"`
-	Index     uint64    `json:"index"`
-	RootHash  string    `json:"root_hash"`
-	TreeSize  uint64    `json:"tree_size"`
-	SignedAt  time.Time `json:"signed_at"`
-	Signature []byte    `json:"signature,omitempty"`
+	LogID    string    `json:"log_id"`
+	Index    uint64    `json:"index"`
+	RootHash string    `json:"root_hash"`
+	TreeSize uint64    `json:"tree_size"`
+	SignedAt time.Time `json:"signed_at"`
+	// PreAnchor is set on an export head when the snapshot was taken before
+	// the first anchor interval. omitempty keeps false identical to heads
+	// signed before the field existed; true is inside the signed payload so
+	// forging the export header flag alone cannot pass verification.
+	PreAnchor bool   `json:"pre_anchor,omitempty"`
+	Signature []byte `json:"signature,omitempty"`
 }
 
 // InclusionProof proves a leaf is in the tree.
@@ -126,12 +131,16 @@ func ProveInclusion(leaves []string, index uint64) (InclusionProof, error) {
 		idx /= 2
 		level = next
 	}
+	root := ""
+	if len(level) == 1 {
+		root = level[0]
+	}
 	return InclusionProof{
 		Index:        index,
 		TreeSize:     uint64(len(leaves)),
 		Siblings:     siblings,
 		SelfSiblings: self,
-		RootHash:     MerkleRoot(leaves),
+		RootHash:     root,
 	}, nil
 }
 

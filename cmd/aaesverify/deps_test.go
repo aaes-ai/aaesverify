@@ -50,10 +50,10 @@ func TestNoRecordsFlag(t *testing.T) {
 	}
 }
 
-func TestVerifyExportV1Fixture(t *testing.T) {
-	export := filepath.Join(moduleDir(t), "testdata", "export_v1.jsonl")
+func TestVerifyCurrentExportFixture(t *testing.T) {
+	export := filepath.Join(moduleDir(t), "testdata", "export_v2.jsonl")
 	pub := filepath.Join(moduleDir(t), "testdata", "public_key.hex")
-	out, code := captureRun(t, []string{"--export", export, "--pubkey", pub})
+	out, code := captureRun(t, []string{"--export", export, "--pubkey", pub, "--allow-pre-anchor"})
 	if code != 0 {
 		t.Fatalf("aaesverify fixture exited %d:\n%s", code, out)
 	}

@@ -43,7 +43,7 @@ func checkTombstones(exp *ExportFile, res *Result) []EntryView {
 }
 
 // tombstoneIsWellFormed reports whether one tombstone names a real range that
-// precedes it, states a reason, an authoriser and a removal time. Every
+// precedes it, states a reason, an authorizer and a removal time. Every
 // refusal is recorded on res.
 func tombstoneIsWellFormed(e EntryView, res *Result) bool {
 	t := e.Tombstone
@@ -57,7 +57,7 @@ func tombstoneIsWellFormed(e EntryView, res *Result) bool {
 	case strings.TrimSpace(t.Reason) == "":
 		res.addError("entry sequence %d: tombstone names range %d..%d and states no reason", e.Sequence, t.FromSequence, t.ToSequence)
 		return false
-	case strings.TrimSpace(t.AuthorisedBy) == "":
+	case strings.TrimSpace(t.AuthorizedBy) == "":
 		res.addError("entry sequence %d: tombstone names range %d..%d and no authorising operator or policy", e.Sequence, t.FromSequence, t.ToSequence)
 		return false
 	case t.RemovedAt.IsZero():
@@ -78,7 +78,7 @@ func coverMissingRanges(exp *ExportFile, usable []EntryView, res *Result) {
 			if t.FromSequence <= g[0] && t.ToSequence >= g[1] {
 				res.Gaps = append(res.Gaps, GapView{
 					FromSequence: g[0], ToSequence: g[1], TombstoneSequence: e.Sequence,
-					Reason: t.Reason, AuthorisedBy: t.AuthorisedBy, PolicyID: t.PolicyID, RemovedAt: t.RemovedAt,
+					Reason: t.Reason, AuthorizedBy: t.AuthorizedBy, PolicyID: t.PolicyID, RemovedAt: t.RemovedAt,
 				})
 				covered = true
 				break

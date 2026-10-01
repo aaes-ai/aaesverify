@@ -1,0 +1,93 @@
+name: Verify and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, os: linux, arch: amd64, suffix: ''}
+          - {runner: ubuntu-24.04-arm, os: linux, arch: arm64, suffix: ''}
+          - {runner: macos-15-intel, os: darwin, arch: amd64, suffix: ''}
+          - {runner: macos-15, os: darwin, arch: arm64, suffix: ''}
+          - {runner: windows-2025, os: windows, arch: amd64, suffix: '.exe'}
+          - {runner: windows-11-arm, os: windows, arch: arm64, suffix: '.exe'}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - name: Native tests and vet
+        run: |
+          test "$(go env GOOS)" = "${{ matrix.os }}"
+          test "$(go env GOARCH)" = "${{ matrix.arch }}"
+          go test -count=1 ./...
+          go vet ./...
+      - name: Race tests
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: go test -race -count=1 ./...
+      - name: Build and execute release binary
+        env:
+          RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-buildid= -X main.version=$RELEASE_VERSION -X main.revision=$SOURCE_REVISION" -o dist/aaesverify-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} ./cmd/aaesverify
+          dist/aaesverify-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }} --version
+          python tools/check_cli.py dist/aaesverify-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
+          go version > dist/toolchain-${{ matrix.os }}-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: aaesverify-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: aaesverify-*
+          path: dist
+          merge-multiple: true
+      - name: Record exact artifact identity
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - <<'META'
+          import hashlib,os
+          from pathlib import Path
+          out=Path('dist')
+          files=sorted(out.glob('aaesverify-*'))
+          assert len(files)==6
+          (out/'BUILD-INFO.txt').write_text('Verifier: '+os.environ['RELEASE_VERSION']+'\nSource revision: '+os.environ['SOURCE_REVISION']+'\nExport schema: aaes.export/v2\nLicense: Apache-2.0\n'+''.join(p.name+': '+p.read_text().strip()+'\n' for p in sorted(out.glob('toolchain-*.txt')))+'All six release binaries passed native tests and clean/negative CLI checks in this workflow.\n')
+          assert len(list(out.glob('toolchain-*.txt')))==6
+          files.extend(sorted(out.glob('toolchain-*.txt')))
+          files.append(out/'BUILD-INFO.txt')
+          (out/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in files))
+          META
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "aaesverify $GITHUB_REF_NAME" --notes-file CHANGELOG.md --latest

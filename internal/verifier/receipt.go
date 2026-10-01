@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // ReceiptView is a receipt plus the log evidence that makes it checkable
-// offline. Entry is optional: with it, the verifier recomputes the leaf from
-// the receipt's own entry rather than trusting the leaf string.
+// offline. Entry is required: the verifier recomputes the leaf from the
+// receipt's own entry rather than trusting the leaf string, and binds intent,
+// grant and record identity to that leaf.
 type ReceiptView struct {
 	ReceiptID  string    `json:"receipt_id"`
 	IntentID   string    `json:"intent_id"`
@@ -31,9 +32,10 @@ type ReceiptView struct {
 //
 // It checks that the head signature verifies under pubKey, that the proof
 // commits the receipt's leaf to the head's root, that the head was signed at
-// or after the receipt was issued, and — when an EntryView is attached — that
-// the leaf was recomputed from the entry rather than taken on faith and that
-// the entry agrees with the receipt's identifiers.
+// or after the receipt was issued, that an EntryView is attached so intent,
+// grant and record identity can be bound to the leaf, that the leaf was
+// recomputed from the entry rather than taken on faith, and that the entry
+// agrees with the receipt's identifiers.
 func VerifyReceipt(r ReceiptView, pubKey []byte) error {
 	if r.ReceiptID == "" || r.TenantID == "" {
 		return fmt.Errorf("%w: receipt_id and tenant_id are required", ErrReceipt)
@@ -50,7 +52,13 @@ func VerifyReceipt(r ReceiptView, pubKey []byte) error {
 	if r.Leaf == "" {
 		return fmt.Errorf("%w: no leaf attached", ErrReceipt)
 	}
+	if r.Entry == nil {
+		return fmt.Errorf("%w: receipt carries no entry; intent, grant and record identity cannot be bound to the leaf", ErrReceipt)
+	}
 	if err := VerifyTreeHead(*r.Head, pubKey); err != nil {
+		return err
+	}
+	if err := checkHeadLogID(*r.Head, hash.DeriveLogID(r.TenantID)); err != nil {
 		return err
 	}
 	if r.Proof.TreeSize > r.Head.TreeSize {
@@ -66,12 +74,7 @@ func VerifyReceipt(r ReceiptView, pubKey []byte) error {
 		return fmt.Errorf("%w: head signed at %s, receipt issued at %s", ErrReceipt,
 			r.Head.SignedAt.UTC().Format(time.RFC3339Nano), r.IssuedAt.UTC().Format(time.RFC3339Nano))
 	}
-	if r.Entry != nil {
-		if err := bindReceiptEntry(r); err != nil {
-			return err
-		}
-	}
-	return nil
+	return bindReceiptEntry(r)
 }
 
 func bindReceiptEntry(r ReceiptView) error {

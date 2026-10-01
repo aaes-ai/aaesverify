@@ -1,39 +1,11 @@
-// Package verifier verifies AAES audit evidence offline, with AAES out of the
-// trust path.
-//
-// # Import constraint (deliberate and test-enforced)
-//
-// This package may import ONLY the Go standard library, internal/hash and
-// internal/types. It must never import internal/gateway, internal/journal,
-// internal/policy, internal/credentials, internal/directory, internal/audit or
-// internal/connectors. TestNoForbiddenImports walks this package's source and
-// TestNoForbiddenImportsInTheClosure walks the whole transitive closure, so a
-// forbidden package that arrives through an intermediate one fails the build
-// too.
-//
-// The reason is not style. A verifier that shares code with the producer
-// shares its bugs and its incentives; the customer's auditor must be able to
-// read this package, compile it, and run it against a JSONL export on a
-// machine that has never talked to AAES. Everything it needs is in the file.
-//
-// # What verification establishes
-//
-//   - Every entry's canonical bytes hash to the leaf the export claims, the
-//     chain links genesis -> ... -> head in sequence order, and the Merkle
-//     root over the leaves equals the root in the signed tree head.
-//   - The tree head signature verifies under the public key the auditor
-//     supplied out of band.
-//   - Every anchor commits to a prefix of the same tree and carries a valid
-//     signature.
-//
-// # What verification does not establish on its own
-//
-// A valid signature proves that whoever holds the key signed this head. If
-// that is AAES alone, AAES can still substitute a different, internally
-// consistent history. Only an external timestamp from a third party and at
-// least one independent witness close that gap; Result reports how many of
-// each were present (TimestampOK, IndependentWitnesses) instead of implying
-// more than the file proves.
+// Package verifier checks AAES exports offline: canonical entry hashes, hash
+// chains, Merkle roots, signatures, anchors, timestamps and pinned witnesses.
+// It imports only the standard library, internal/hash and internal/types;
+// source and transitive-closure tests enforce that restriction. Shared hash
+// code still creates common-mode risk; this is not an independent second reader.
+// Verification does not prove capture completeness, input truth, downstream
+// success or absence of equivocation. Independent timestamps and witnesses
+// provide separately reported commitment evidence under caller-supplied trust.
 package verifier
 
 import (
@@ -41,8 +13,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
-	"github.com/aaes-dev/aaesverify/internal/types"
+	"github.com/aaes-ai/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/types"
 )
 
 // Errors. All verification failures wrap one of these, so callers can use
@@ -70,21 +42,26 @@ var (
 )
 
 // EntryView is one transparency-log entry as an exporter published it. The
-// twelve fields above ChainHash are the entry preimage; ChainHash and Leaf are
-// the exporter's claims, recomputed and cross-checked here.
+// preimage fields above ChainHash are sealed into the leaf; ChainHash and Leaf
+// are the exporter's claims, recomputed and cross-checked here.
+//
+// v2 entries carry amount_minor and amount_currency (both omitempty): thirteen
+// preimage fields when both amount fields are present, eleven when both are omitted.
+// Only aaes.export/v2 is supported. The schema is never inferred from content.
 type EntryView struct {
-	TenantID   string         `json:"tenant_id"`
-	Sequence   uint64         `json:"sequence"`
-	RecordHash string         `json:"record_hash"`
-	IntentID   string         `json:"intent_id"`
-	ActorID    string         `json:"actor_id"`
-	Capability string         `json:"capability"`
-	Tier       types.RiskTier `json:"tier"`
-	Allowed    bool           `json:"allowed"`
-	GrantID    string         `json:"grant_id"`
-	AmountUSD  float64        `json:"amount_usd"`
-	OccurredAt time.Time      `json:"occurred_at"`
-	LinkedAt   time.Time      `json:"linked_at"`
+	TenantID       string         `json:"tenant_id"`
+	Sequence       uint64         `json:"sequence"`
+	RecordHash     string         `json:"record_hash"`
+	IntentID       string         `json:"intent_id"`
+	ActorID        string         `json:"actor_id"`
+	Capability     string         `json:"capability"`
+	Tier           types.RiskTier `json:"tier"`
+	Allowed        bool           `json:"allowed"`
+	GrantID        string         `json:"grant_id"`
+	AmountMinor    int64          `json:"amount_minor,omitempty"`
+	AmountCurrency string         `json:"amount_currency,omitempty"`
+	OccurredAt     time.Time      `json:"occurred_at"`
+	LinkedAt       time.Time      `json:"linked_at"`
 
 	// Tombstone, when non-nil, marks this entry as the log's record of a
 	// retention removal. It is part of the preimage, so the head signature
@@ -96,6 +73,11 @@ type EntryView struct {
 	Leaf      string `json:"leaf"`
 }
 
+// Amount returns the stored integer minor units and currency.
+func (e EntryView) Amount() types.Money {
+	return types.Money{Minor: e.AmountMinor, Currency: e.AmountCurrency}
+}
+
 // TombstoneView mirrors audit.Tombstone field for field. The verifier must not
 // import the producer, so the shape is duplicated here and
 // TestVerifierAgreesOnEntryPreimage fails the build if the two drift.
@@ -103,47 +85,49 @@ type TombstoneView struct {
 	FromSequence uint64    `json:"from_sequence"`
 	ToSequence   uint64    `json:"to_sequence"`
 	Reason       string    `json:"reason"`
-	AuthorisedBy string    `json:"authorised_by"`
+	AuthorizedBy string    `json:"authorised_by"`
 	PolicyID     string    `json:"policy_id,omitempty"`
 	RecordCount  uint64    `json:"record_count,omitempty"`
 	ReceiptCount uint64    `json:"receipt_count,omitempty"`
 	RemovedAt    time.Time `json:"removed_at"`
 }
 
-// entryPreimage mirrors audit.Entry field for field. The two must agree byte
-// for byte; TestVerifierAgreesOnEntryPreimage in internal/audit fails the build
-// if they drift.
+// entryPreimage mirrors audit.Entry field for field under aaes.export/v2. The
+// two must agree byte for byte; TestVerifierAgreesOnEntryPreimage in
+// internal/audit fails the build if they drift.
 type entryPreimage struct {
-	ActorID    string         `json:"actor_id"`
-	Allowed    bool           `json:"allowed"`
-	AmountUSD  float64        `json:"amount_usd"`
-	Capability string         `json:"capability"`
-	GrantID    string         `json:"grant_id"`
-	IntentID   string         `json:"intent_id"`
-	LinkedAt   time.Time      `json:"linked_at"`
-	OccurredAt time.Time      `json:"occurred_at"`
-	RecordHash string         `json:"record_hash"`
-	Sequence   uint64         `json:"sequence"`
-	TenantID   string         `json:"tenant_id"`
-	Tier       types.RiskTier `json:"tier"`
-	Tombstone  *TombstoneView `json:"tombstone,omitempty"`
+	ActorID        string         `json:"actor_id"`
+	Allowed        bool           `json:"allowed"`
+	AmountMinor    int64          `json:"amount_minor,omitempty"`
+	AmountCurrency string         `json:"amount_currency,omitempty"`
+	Capability     string         `json:"capability"`
+	GrantID        string         `json:"grant_id"`
+	IntentID       string         `json:"intent_id"`
+	LinkedAt       time.Time      `json:"linked_at"`
+	OccurredAt     time.Time      `json:"occurred_at"`
+	RecordHash     string         `json:"record_hash"`
+	Sequence       uint64         `json:"sequence"`
+	TenantID       string         `json:"tenant_id"`
+	Tier           types.RiskTier `json:"tier"`
+	Tombstone      *TombstoneView `json:"tombstone,omitempty"`
 }
 
 func (e EntryView) preimage() ([]byte, error) {
 	return hash.CanonicalJSON(entryPreimage{
-		ActorID:    e.ActorID,
-		Allowed:    e.Allowed,
-		AmountUSD:  e.AmountUSD,
-		Capability: e.Capability,
-		GrantID:    e.GrantID,
-		IntentID:   e.IntentID,
-		LinkedAt:   e.LinkedAt,
-		OccurredAt: e.OccurredAt,
-		RecordHash: e.RecordHash,
-		Sequence:   e.Sequence,
-		TenantID:   e.TenantID,
-		Tier:       e.Tier,
-		Tombstone:  e.Tombstone,
+		ActorID:        e.ActorID,
+		Allowed:        e.Allowed,
+		AmountMinor:    e.AmountMinor,
+		AmountCurrency: e.AmountCurrency,
+		Capability:     e.Capability,
+		GrantID:        e.GrantID,
+		IntentID:       e.IntentID,
+		LinkedAt:       e.LinkedAt,
+		OccurredAt:     e.OccurredAt,
+		RecordHash:     e.RecordHash,
+		Sequence:       e.Sequence,
+		TenantID:       e.TenantID,
+		Tier:           e.Tier,
+		Tombstone:      e.Tombstone,
 	})
 }
 

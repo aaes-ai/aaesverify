@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 func TestStrippingEveryAnchorFailsVerification(t *testing.T) {
@@ -46,7 +46,7 @@ func TestStrippingEveryAnchorFailsVerification(t *testing.T) {
 func TestPreAnchorExportWithoutAnchorsVerifies(t *testing.T) {
 	entries, head, pub, _ := buildLog(t, 3)
 	doc := exportJSONL(t, entries, head, pub)
-	res, err := VerifyExportReader(strings.NewReader(doc), pub)
+	res, err := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if err != nil {
 		t.Fatal(err)
 	}

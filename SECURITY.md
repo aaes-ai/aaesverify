@@ -6,7 +6,7 @@ Report security issues in this verifier, or in the evidence format it implements
 
 ## Scope
 
-This repository contains the standalone offline verifier for AAES evidence exports (`aaes.export/v1`) and evidence packs (`aaes.evidence-pack/1`). Findings in scope include incorrect acceptance of malformed or tampered exports, cryptographic verification errors, and canonicalization disagreements that let two readers accept different byte sequences as the same value.
+This repository contains the standalone offline verifier for AAES evidence exports (`aaes.export/v2`) and receipt verification through the library API. It does not bind evidence-pack sidecars. Findings in scope include incorrect acceptance of malformed or tampered exports, cryptographic verification errors, and canonicalization disagreements that let two readers accept different byte sequences as the same value.
 
 Out of scope: the AAES platform itself, which is closed source and reported through the same channel.
 

@@ -17,8 +17,8 @@ import (
 // the package: an auditor must be able to read it, compile it and run it
 // against a JSONL export on a machine that has never talked to AAES.
 var allowedVerifierImports = map[string]bool{
-	"github.com/aaes-dev/aaesverify/internal/hash":  true,
-	"github.com/aaes-dev/aaesverify/internal/types": true,
+	"github.com/aaes-ai/aaesverify/internal/hash":  true,
+	"github.com/aaes-ai/aaesverify/internal/types": true,
 }
 
 var forbiddenImportFragments = []string{
@@ -110,8 +110,8 @@ func TestNoForbiddenImportsInTheClosure(t *testing.T) {
 	// A walk that silently visits nothing would pass the check above, so the
 	// packages that MUST be in the closure are asserted by name.
 	for _, want := range []string{
-		"github.com/aaes-dev/aaesverify/internal/hash",
-		"github.com/aaes-dev/aaesverify/internal/types",
+		"github.com/aaes-ai/aaesverify/internal/hash",
+		"github.com/aaes-ai/aaesverify/internal/types",
 	} {
 		if !sortedContains(visited, want) {
 			t.Errorf("the closure walk never reached %s; the check is not closing over the package (visited %v)", want, visited)
@@ -137,12 +137,12 @@ func TestTheClosureGuardCatchesATransitiveDependency(t *testing.T) {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	write("go.mod", "module github.com/aaes-dev/aaesverify\n\ngo 1.27\n")
-	write("internal/hash/hash.go", "package hash\n\nimport _ \"github.com/aaes-dev/aaesverify/internal/scratchdep\"\n")
+	write("go.mod", "module github.com/aaes-ai/aaesverify\n\ngo 1.27\n")
+	write("internal/hash/hash.go", "package hash\n\nimport _ \"github.com/aaes-ai/aaesverify/internal/scratchdep\"\n")
 	write("internal/types/types.go", "package types\n")
-	write("internal/scratchdep/dep.go", "package scratchdep\n\nimport _ \"github.com/aaes-dev/aaesverify/internal/journal\"\n")
+	write("internal/scratchdep/dep.go", "package scratchdep\n\nimport _ \"github.com/aaes-ai/aaesverify/internal/journal\"\n")
 	write("internal/journal/journal.go", "package journal\n")
-	write("internal/verifier/verifier.go", "package verifier\n\nimport (\n\t_ \"github.com/aaes-dev/aaesverify/internal/hash\"\n\t_ \"github.com/aaes-dev/aaesverify/internal/types\"\n)\n")
+	write("internal/verifier/verifier.go", "package verifier\n\nimport (\n\t_ \"github.com/aaes-ai/aaesverify/internal/hash\"\n\t_ \"github.com/aaes-ai/aaesverify/internal/types\"\n)\n")
 
 	startDir := filepath.Join(root, "internal", "verifier")
 	for _, imp := range packageImports(t, startDir) {
@@ -151,7 +151,7 @@ func TestTheClosureGuardCatchesATransitiveDependency(t *testing.T) {
 		}
 	}
 
-	violations, visited := closureCheck(t, root, "github.com/aaes-dev/aaesverify", startDir, allowedVerifierImports)
+	violations, visited := closureCheck(t, root, "github.com/aaes-ai/aaesverify", startDir, allowedVerifierImports)
 	if len(violations) == 0 {
 		t.Fatal("the closure walk accepted a transitive dependency on internal/journal through internal/hash")
 	}
@@ -161,7 +161,7 @@ func TestTheClosureGuardCatchesATransitiveDependency(t *testing.T) {
 			t.Errorf("violations %q do not name %s", joined, want)
 		}
 	}
-	if !sortedContains(visited, "github.com/aaes-dev/aaesverify/internal/scratchdep") {
+	if !sortedContains(visited, "github.com/aaes-ai/aaesverify/internal/scratchdep") {
 		t.Errorf("the walk never reached the intermediate package; visited %v", visited)
 	}
 }

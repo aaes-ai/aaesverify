@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aaes-dev/aaesverify/internal/hash"
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 var testTSGenTime = time.Date(2026, 9, 12, 15, 4, 5, 0, time.UTC)
@@ -267,8 +267,8 @@ func testTSA(t *testing.T) ([]byte, *x509.Certificate, *x509.CertPool, *ecdsa.Pr
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: "verifier-tsa"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
+		NotBefore:             testTSGenTime.Add(-24 * time.Hour),
+		NotAfter:              testTSGenTime.Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 		BasicConstraintsValid: true,

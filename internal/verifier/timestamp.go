@@ -119,7 +119,7 @@ func verifyTimestampWithTrust(ts TimestampView, roots *x509.CertPool, now time.T
 	if err != nil {
 		return err
 	}
-	return verifyTimestampChain(signer, ders, roots, now)
+	return verifyTimestampChain(signer, ders, roots, now, info.GenTime)
 }
 
 // verifyTimestampImprint checks that the token binds the claimed digest: the
@@ -140,8 +140,9 @@ func verifyTimestampImprint(ts TimestampView, info tsInfo) error {
 
 // verifyTimestampChain checks that the signer the CMS signature verified under
 // chains to a caller-supplied TSA root, using the token's other certificates
-// as intermediates. A zero now means "the process clock".
-func verifyTimestampChain(signer *x509.Certificate, ders [][]byte, roots *x509.CertPool, now time.Time) error {
+// as intermediates. A zero now means validate at GenTime (the token's own
+// time); when GenTime is also zero the process clock is the last resort.
+func verifyTimestampChain(signer *x509.Certificate, ders [][]byte, roots *x509.CertPool, now, genTime time.Time) error {
 	intermediates := x509.NewCertPool()
 	for _, der := range ders {
 		cert, err := x509.ParseCertificate(der)
@@ -155,7 +156,10 @@ func verifyTimestampChain(signer *x509.Certificate, ders [][]byte, roots *x509.C
 	}
 	at := now
 	if at.IsZero() {
-		at = time.Now().UTC()
+		at = genTime
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
 	}
 	if _, err := signer.Verify(x509.VerifyOptions{
 		Roots:         roots,

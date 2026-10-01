@@ -1,6 +1,6 @@
 package verifier
 
-// This file is the verifier's reading of the journal crypto-shredding seam
+// The verifier's reading of the journal crypto-shredding seam
 // (docs/engineering/JOURNAL-SHREDDING.md). It changes no check: the chain, the
 // leaves, the root and the signatures are computed over the stored bytes, and
 // a protected field IS stored bytes — ciphertext with an enc:v1: marker. What

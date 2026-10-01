@@ -1,13 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/aaes-dev/aaesverify/internal/verifier"
+	"github.com/aaes-ai/aaesverify/internal/verifier"
 )
 
 // TestMainEntrypointExitsWithRunCode exercises main itself in a subprocess:
@@ -136,6 +137,7 @@ func TestRunAcceptsWitnessTrustFile(t *testing.T) {
 		"--export", fixtureExport(t),
 		"--pubkey", fixturePubKeyPath(t),
 		"--witness-trust", file,
+		"--allow-pre-anchor",
 	})
 	if code != 0 || !strings.Contains(out, "PASS") {
 		t.Fatalf("verify with witness trust exited %d:\n%s", code, out)
@@ -166,15 +168,23 @@ func TestRunTamperedExportFailsVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tampered := strings.Replace(string(raw), `"root_hash":"2`, `"root_hash":"3`, 1)
-	if tampered == string(raw) {
+	tampered := string(raw)
+	const marker = `"root_hash":"`
+	idx := strings.Index(tampered, marker)
+	if idx < 0 {
 		t.Fatal("fixture did not contain a root_hash to tamper")
 	}
+	pos := idx + len(marker)
+	flip := byte('0')
+	if tampered[pos] == '0' {
+		flip = '1'
+	}
+	tampered = tampered[:pos] + string(flip) + tampered[pos+1:]
 	copy := filepath.Join(t.TempDir(), "tampered.jsonl")
 	if err := os.WriteFile(copy, []byte(tampered), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, code := captureRun(t, []string{"--export", copy, "--pubkey", fixturePubKeyPath(t)})
+	out, code := captureRun(t, []string{"--export", copy, "--pubkey", fixturePubKeyPath(t), "--allow-pre-anchor"})
 	if code != 1 {
 		t.Fatalf("tampered export exited %d, want 1:\n%s", code, out)
 	}
@@ -212,9 +222,39 @@ func TestVerdictAndKeySourceText(t *testing.T) {
 	}
 }
 
+func TestRunRefusesPreAnchorWithoutOptIn(t *testing.T) {
+	path := writePreAnchorExport(t)
+	out, code := captureRun(t, []string{
+		"--export", path,
+		"--pubkey", fixturePubKeyPath(t),
+	})
+	if code != 1 {
+		t.Fatalf("pre_anchor without opt-in exited %d, want 1:\n%s", code, out)
+	}
+	if !strings.Contains(out, "--allow-pre-anchor") {
+		t.Fatalf("refusal does not name the opt-in:\n%s", out)
+	}
+}
+
+func TestRunVerifiesCurrentFixture(t *testing.T) {
+	for _, name := range []string{"export_v2.jsonl"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(moduleDir(t), "testdata", name)
+			out, code := captureRun(t, []string{
+				"--export", path,
+				"--pubkey", fixturePubKeyPath(t),
+				"--allow-pre-anchor",
+			})
+			if code != 0 || !strings.Contains(out, "PASS") {
+				t.Fatalf("%s exited %d:\n%s", name, code, out)
+			}
+		})
+	}
+}
+
 func fixtureExport(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(moduleDir(t), "testdata", "export_v1.jsonl")
+	return filepath.Join(moduleDir(t), "testdata", "export_v2.jsonl")
 }
 
 func fixturePubKeyPath(t *testing.T) string {
@@ -238,4 +278,51 @@ func writeWitnessTrust(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writePreAnchorExport(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(fixtureExport(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, `"type":"anchor"`) {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		t.Fatal("fixture emptied after stripping anchors")
+	}
+	var hdr map[string]any
+	if err := json.Unmarshal([]byte(kept[0]), &hdr); err != nil {
+		t.Fatal(err)
+	}
+	hdr["pre_anchor"] = true
+	hb, err := json.Marshal(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept[0] = string(hb)
+	path := filepath.Join(t.TempDir(), "pre_anchor.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestVersionAndUnexpectedArguments(t *testing.T) {
+	out, code := captureRun(t, []string{"--version"})
+	if code != 0 || !strings.Contains(out, "aaes.export/v2") {
+		t.Fatalf("version: %d %s", code, out)
+	}
+	out, code = captureRun(t, []string{"stray"})
+	if code != 2 || !strings.Contains(out, "unexpected positional") {
+		t.Fatalf("arguments: %d %s", code, out)
+	}
 }

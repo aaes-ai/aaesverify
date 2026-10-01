@@ -14,22 +14,33 @@ import (
 // and an export with zero independent witnesses and zero independent timestamps
 // fails. It does not contact a TSA or witness; the tokens and countersignatures
 // already in the file are all it uses.
+//
+// AllowPreAnchor accepts an export that declares pre_anchor with no anchors
+// when the head signature does not cover that flag (older exports). A head
+// that signs pre_anchor verifies without this opt-in.
 type VerifyOptions struct {
 	// TrustedWitnessKeys pins independent witness identities supplied out of band.
 	// Exported keys and custody declarations never establish this trust.
 	TrustedWitnessKeys map[string][]byte
 	TSARoots           *x509.CertPool
 	RequireIndependent bool
+	AllowPreAnchor     bool
 }
 
-// VerifyExportReaderWithOptions is VerifyExportReader with trust roots and the
-// independent-verification demand.
-func VerifyExportReaderWithOptions(r io.Reader, pubKey []byte, opts VerifyOptions) (*Result, error) {
+// VerifyExportReaderResult verifies an export from r. Load failures become
+// Result.Errors with OK=false; there is no separate error return.
+func VerifyExportReaderResult(r io.Reader, pubKey []byte, opts VerifyOptions) *Result {
 	exp, err := LoadExportReader(r)
 	if err != nil {
-		return &Result{OK: false, Errors: []string{err.Error()}}, nil
+		return &Result{OK: false, Errors: []string{err.Error()}}
 	}
-	return verifyParsed(exp, pubKey, opts), nil
+	return verifyParsed(exp, pubKey, opts)
+}
+
+// VerifyExportReaderWithOptions is VerifyExportReaderResult with a nil error
+// so existing callers that still unpack (*Result, error) keep compiling.
+func VerifyExportReaderWithOptions(r io.Reader, pubKey []byte, opts VerifyOptions) (*Result, error) {
+	return VerifyExportReaderResult(r, pubKey, opts), nil
 }
 
 // VerifyExportWithOptions verifies a file with caller-supplied trust settings.
@@ -39,23 +50,28 @@ func VerifyExportWithOptions(path string, pubKey []byte, opts VerifyOptions) (*R
 		return &Result{Path: path, OK: false, Errors: []string{err.Error()}}, fmt.Errorf("verifier: open export: %w", err)
 	}
 	defer f.Close()
-	res, err := VerifyExportReaderWithOptions(f, pubKey, opts)
-	if res != nil {
-		res.Path = path
-	}
-	return res, err
+	res := VerifyExportReaderResult(f, pubKey, opts)
+	res.Path = path
+	return res, nil
 }
 
 // requireEvidence fails an export that claims (or is asked to prove) more than
-// the file contains. aaes.export/v1 can carry anchors, timestamps and witnesses:
+// the file contains. aaes.export can carry anchors, timestamps and witnesses:
 // an export with none of them is incomplete unless it honestly declares it was
-// written before the first anchor interval (pre_anchor).
+// written before the first anchor interval (pre_anchor). A head that signs
+// that flag is trusted; an unsigned header flag still needs an explicit opt-in.
 func requireEvidence(exp *ExportFile, res *Result, opts VerifyOptions) {
 	if res.AnchorCount == 0 {
 		if exp.Header.PreAnchor {
-			res.Warnings = append(res.Warnings, "pre_anchor: the export declares it was written before the first anchor interval; the head is signed but never externally timestamped or witnessed")
+			if exp.Header.Head.PreAnchor {
+				res.Warnings = append(res.Warnings, "pre_anchor: the export declares it was written before the first anchor interval; the head is signed but never externally timestamped or witnessed")
+			} else if !opts.AllowPreAnchor {
+				res.addError("export declares pre_anchor, which the head signature does not cover; pass --allow-pre-anchor to accept an unanchored export")
+			} else {
+				res.Warnings = append(res.Warnings, "pre_anchor: the export declares it was written before the first anchor interval; the head is signed but never externally timestamped or witnessed")
+			}
 		} else {
-			res.addError("the export contains no anchors, timestamps or witnesses; aaes.export/v1 supports them, so an anchorless file is incomplete unless it declares pre_anchor=true")
+			res.addError("the export contains no anchors, timestamps or witnesses; aaes.export supports them, so an anchorless file is incomplete unless it declares pre_anchor=true")
 		}
 	}
 	if opts.RequireIndependent {
