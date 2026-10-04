@@ -43,6 +43,11 @@ The public synthetic sample is in `cmd/aaesverify/testdata/sample-export.jsonl`:
 The sample has 16 entries and no independent witness or timestamp. Its key is
 public demonstration material, not a trusted production key.
 
+Follow the [offline-verification walkthrough](https://aaes.ai/demos.html#verification)
+alongside the [public sample pack](https://aaes.ai/library/verification.html#verify-locally).
+The written walkthrough explains the clean-export result, the specified tamper
+test, and the trust assumptions. Video recordings will be added to that page.
+
 Optional flags: `--tsa-roots`, `--witness-trust`, `--require-independent`,
 `--allow-pre-anchor`, `--json`, and `--version`. `--require-independent`
 rejects evidence without a witness or timestamp verified against caller-supplied
