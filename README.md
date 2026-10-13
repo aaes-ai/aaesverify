@@ -45,8 +45,14 @@ public demonstration material, not a trusted production key.
 
 Follow the [offline-verification walkthrough](https://aaes.ai/demos.html#verification)
 alongside the [public sample pack](https://aaes.ai/library/verification.html#verify-locally).
-The written walkthrough explains the clean-export result, the specified tamper
-test, and the trust assumptions. Video recordings will be added to that page.
+The written and recorded walkthroughs explain the clean-export result, the
+specified tamper test, and the trust assumptions.
+
+The [AI agent control evaluation kit](https://aaes.ai/guides/agent-control-evaluation-kit.html)
+provides a reusable control checklist and procurement questions, plus a Python
+standard-library runner for unchanged, edited-hash, wrong-key, and
+independence-required checks. Its recorded results concern only the synthetic
+export; they do not test agent execution or establish independent validation.
 
 Optional flags: `--tsa-roots`, `--witness-trust`, `--require-independent`,
 `--allow-pre-anchor`, `--json`, and `--version`. `--require-independent`
