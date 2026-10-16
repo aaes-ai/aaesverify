@@ -30,7 +30,7 @@ func TestActualExportChecksSignedHeadAlgorithm(t *testing.T) {
 	doc := strings.Replace(exportJSONL(t, entries, head, pub), ExportSchemaV3, ExportSchemaV2, 1)
 	res, _ := VerifyExportReaderWithOptions(strings.NewReader(doc), pub, VerifyOptions{AllowPreAnchor: true})
 	if res == nil || res.OK || res.SignatureOK || !strings.Contains(strings.Join(res.Errors, "\n"), `head algorithm "rsa"`) {
-		t.Fatalf("an unsupported signed algorithm on a v2-labelled export was not refused for that reason: %+v", res)
+		t.Fatalf("an unsupported signed algorithm on a v2-labeled export was not refused for that reason: %+v", res)
 	}
 	// Altering or deleting the algorithm on a modern head must break its
 	// signature, including a change to the historical empty spelling.
