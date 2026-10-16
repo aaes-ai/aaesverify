@@ -76,17 +76,27 @@ func captureWith(t *testing.T, args []string, entry func([]string) int) (string,
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Drain concurrently: Windows pipe buffers are smaller than some results.
+	type read struct {
+		raw []byte
+		err error
+	}
+	done := make(chan read, 1)
+	go func() {
+		raw, err := io.ReadAll(r)
+		done <- read{raw, err}
+	}()
 	oldOut, oldErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = w, w
 	code := entry(args)
 	_ = w.Close()
 	os.Stdout, os.Stderr = oldOut, oldErr
-	raw, err := io.ReadAll(r)
+	got := <-done
 	_ = r.Close()
-	if err != nil {
-		t.Fatal(err)
+	if got.err != nil {
+		t.Fatal(got.err)
 	}
-	return string(raw), code
+	return string(got.raw), code
 }
 
 func moduleDir(t *testing.T) string {
