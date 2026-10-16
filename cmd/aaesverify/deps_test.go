@@ -40,13 +40,15 @@ func TestImportGraphExcludesOperatorPackages(t *testing.T) {
 	}
 }
 
-func TestNoRecordsFlag(t *testing.T) {
+func TestCandidateEvidenceFlags(t *testing.T) {
 	out, code := captureRun(t, []string{"-h"})
 	if code != 0 {
 		t.Fatalf("aaesverify -h exited %d:\n%s", code, out)
 	}
-	if strings.Contains(out, "--records") {
-		t.Fatalf("slim verifier must not take --records:\n%s", out)
+	for _, name := range []string{"-records", "-evaluation", "-export"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("candidate missing %s: %s", name, out)
+		}
 	}
 }
 
@@ -57,12 +59,18 @@ func TestVerifyCurrentExportFixture(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("aaesverify fixture exited %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "PASS") {
-		t.Fatalf("want PASS, got:\n%s", out)
+	if !strings.Contains(out, "CONSISTENT") {
+		t.Fatalf("want CONSISTENT, got:\n%s", out)
 	}
 }
 
 func captureRun(t *testing.T, args []string) (string, int) {
+	t.Helper()
+	return captureWith(t, args, run)
+}
+
+// captureWith runs entry with stdout and stderr captured together.
+func captureWith(t *testing.T, args []string, entry func([]string) int) (string, int) {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -70,7 +78,7 @@ func captureRun(t *testing.T, args []string) (string, int) {
 	}
 	oldOut, oldErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = w, w
-	code := run(args)
+	code := entry(args)
 	_ = w.Close()
 	os.Stdout, os.Stderr = oldOut, oldErr
 	raw, err := io.ReadAll(r)
@@ -88,4 +96,10 @@ func moduleDir(t *testing.T) string {
 		t.Fatal("runtime.Caller")
 	}
 	return filepath.Dir(file)
+}
+
+// exportFixturePath is a v2 export with its ledger key embedded.
+func exportFixturePath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(moduleDir(t), "testdata", "export_v2.jsonl")
 }

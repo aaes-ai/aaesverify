@@ -16,7 +16,6 @@ var (
 	oidSHA256Verifier     = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidSignedDataVerifier = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2}
 	oidTSTInfoVerifier    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 1, 4}
-	oidMessageDigestV     = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 4}
 )
 
 const (
@@ -90,7 +89,9 @@ type tsSignerInfo struct {
 // verifyTimestampWithTrust is this package's counterpart of
 // witness.HTTPTimestamp.VerifyWithTrust. The verifier cannot import that package;
 // the checks are the same: the token binds the claimed digest, a CMS SignerInfo
-// signature verifies, and the signer chains to the caller-supplied TSA roots.
+// carries the RFC 5816 signed attributes (contentType, messageDigest, ESSCertID
+// or ESSCertIDv2 naming the signer) and its signature verifies, and the signer
+// chains to the caller-supplied TSA roots.
 func verifyTimestampWithTrust(ts TimestampView, roots *x509.CertPool, now time.Time) error {
 	if roots == nil {
 		return fmt.Errorf("no TSA trust roots supplied")
@@ -124,7 +125,8 @@ func verifyTimestampWithTrust(ts TimestampView, roots *x509.CertPool, now time.T
 
 // verifyTimestampImprint checks that the token binds the claimed digest: the
 // imprint algorithm is SHA-256, the imprinted bytes are the digest the export
-// records, and the claimed time is the token's own GenTime.
+// records, and the claimed time agrees with the token's own GenTime to the
+// second, as the open verification spec states.
 func verifyTimestampImprint(ts TimestampView, info tsInfo) error {
 	if !info.MessageImprint.HashAlgorithm.Algorithm.Equal(oidSHA256Verifier) {
 		return fmt.Errorf("the token imprints %v, not SHA-256", info.MessageImprint.HashAlgorithm.Algorithm)

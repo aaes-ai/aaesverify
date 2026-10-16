@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aaes.ai/spec/v2/export.schema.json",
-  "title": "AAES evidence export line (aaes.export/v2)",
+  "$id": "https://aaes.ai/spec/v3/export.schema.json",
+  "title": "AAES evidence export line (aaes.export/v3)",
   "description": "One line of an AAES evidence export. An export is a UTF-8 JSON Lines file; every line is exactly one of header, entry, or anchor, and the file must start with exactly one header line. This schema describes JSON structure only: it cannot enforce file order, cross-line relationships, hashes, or cryptographic validity. Specification: https://aaes.ai/spec.html",
   "oneOf": [
     {
@@ -18,6 +18,7 @@
     "treeHead": {
       "type": "object",
       "required": [
+        "algorithm",
         "log_id",
         "index",
         "root_hash",
@@ -55,6 +56,11 @@
           "type": "string",
           "contentEncoding": "base64",
           "description": "Ed25519 signature over the canonical JSON of the head with this field omitted. Base64 decoding and the 64-byte decoded length require separate checks; Draft 2020-12 treats contentEncoding as an annotation."
+        },
+        "algorithm": {
+          "type": "string",
+          "const": "ed25519",
+          "description": "Signing primitive inside the canonical signed head; every v3 head and anchor must declare it."
         }
       },
       "additionalProperties": false
@@ -176,17 +182,14 @@
         "tenant_id",
         "exported_at",
         "entry_count",
-        "head",
-        "public_key",
-        "signing_key_id",
-        "signature_algorithm"
+        "head"
       ],
       "properties": {
         "type": {
           "const": "header"
         },
         "schema": {
-          "const": "aaes.export/v2"
+          "const": "aaes.export/v3"
         },
         "log_id": {
           "type": "string",
@@ -210,7 +213,7 @@
         },
         "public_key": {
           "type": "string",
-          "description": "Ed25519 public key for head verification; a verifier still requires the key out of band and fails closed on mismatch."
+          "description": "Ed25519 public key for head verification; the CLI can use an embedded key for internal consistency, but signer provenance requires a separately authenticated key supplied with --pubkey. Mismatch fails closed."
         },
         "signing_key_id": {
           "type": "string",

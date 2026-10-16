@@ -82,7 +82,7 @@ func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 	}
 	res.PublicKeyHex = hex.EncodeToString(key)
 
-	st := checkChain(exp.Entries, exp.Header.Head, key)
+	st := checkChain(exp.Entries, exp.Header.Head, key, exp.Header.SignatureAlgorithm)
 	res.RecomputedRoot = st.recomputed
 	res.ChainOK = st.chainErr == nil
 	res.RootOK = st.rootErr == nil
@@ -129,6 +129,17 @@ func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 	if len(res.Errors) > 0 {
 		res.OK = false
 	}
+	res.ResultSchema = ResultSchemaV2
+	switch {
+	case !res.OK:
+		res.Verdict = "FAIL"
+	case res.Gapped || len(res.Gaps) > 0:
+		res.Verdict = "OK_WITH_GAPS"
+	case len(res.ShredEvents) > 0:
+		res.Verdict = "OK_WITH_SHREDDED_FIELDS"
+	default:
+		res.Verdict = res.IntegrityHeadline()
+	}
 	return res
 }
 
@@ -136,8 +147,11 @@ func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 // declared entry count, the tenant agreement and the head's log id. It returns
 // the log id every signed head in this export must name.
 func checkHeader(exp *ExportFile, res *Result) string {
-	if exp.Header.Schema != ExportSchemaV2 {
-		res.addError("unsupported export schema %q, want %q; re-export with the current writer", exp.Header.Schema, ExportSchemaV2)
+	if exp.Header.Schema != ExportSchemaV2 && exp.Header.Schema != ExportSchemaV3 {
+		res.addError("unsupported export schema %q, want %q; re-export with the current writer", exp.Header.Schema, ExportSchema)
+	}
+	if exp.Header.Schema == ExportSchemaV3 {
+		checkV3HeadAlgorithms(exp, res)
 	}
 	if uint64(len(exp.Entries)) != exp.Header.EntryCount {
 		res.addError("header declares %d entries, file contains %d", exp.Header.EntryCount, len(exp.Entries))
@@ -174,6 +188,23 @@ func checkHeader(exp *ExportFile, res *Result) string {
 		res.addError("signed head declares pre_anchor but the export header does not")
 	}
 	return wantLogID
+}
+
+// checkV3HeadAlgorithms verifies the v3 schema's algorithm claims on the
+// signed head and on every anchor head.
+func checkV3HeadAlgorithms(exp *ExportFile, res *Result) {
+	if exp.Header.Head.Algorithm == "" {
+		res.addError("v3 export requires an algorithm inside the signed head")
+	} else if err := RefuseUnknownHeadAlgorithm(exp.Header.Head.Algorithm); err != nil {
+		res.addError("v3 export names an unchecked head algorithm: %v", err)
+	}
+	for i, anchor := range exp.Anchors {
+		if anchor.Head.Algorithm == "" {
+			res.addError("v3 anchor %d requires an algorithm inside its signed head", i)
+		} else if err := RefuseUnknownHeadAlgorithm(anchor.Head.Algorithm); err != nil {
+			res.addError("v3 anchor %d names an unchecked head algorithm: %v", i, err)
+		}
+	}
 }
 
 // appendHonestyWarnings records what the Result does not prove. None of these

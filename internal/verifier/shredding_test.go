@@ -29,10 +29,11 @@ func shreddedLog(t *testing.T, nProtected int) string {
 	entries[2].Capability = KeyShredCapability
 	rechain(t, entries)
 	head := hash.TreeHead{
-		LogID:    hash.DeriveLogID(entries[0].TenantID),
-		Index:    entries[len(entries)-1].Sequence,
-		TreeSize: uint64(len(entries)),
-		SignedAt: entries[len(entries)-1].OccurredAt.Add(time.Hour),
+		Algorithm: "ed25519",
+		LogID:     hash.DeriveLogID(entries[0].TenantID),
+		Index:     entries[len(entries)-1].Sequence,
+		TreeSize:  uint64(len(entries)),
+		SignedAt:  entries[len(entries)-1].OccurredAt.Add(time.Hour),
 	}
 	leaves := make([]string, len(entries))
 	for i, e := range entries {

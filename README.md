@@ -1,8 +1,34 @@
 # aaesverify
 
+Release preparation: `v0.3.0-rc.1` is an unpublished candidate for export v3,
+retained v2 evidence, current record/2 binding and evaluation disclosures.
+[RELEASE-CANDIDATE.md](RELEASE-CANDIDATE.md) lists its checks and remaining gates.
+The previously published v0.2.0 binaries support v2; no new public tag or download
+is asserted here. Successful witnessless candidate checks render CONSISTENT;
+PASS additionally requires independent attestation.
+
+The candidate's `--evaluation DIR` authenticates original manifests and disclosed
+artifact hashes, checks v3 exports, re-seals current record/2 records and binds
+them to export entries. Omitted proprietary files and receipt-chain seals remain
+unverified. See [EVALUATION-DISCLOSURE.md](EVALUATION-DISCLOSURE.md) and
+[RECORDS.md](RECORDS.md). Shared suite 3.0.0 records 123/123 selected synthetic
+checks across three frameworks; external verification checks recorded evidence
+and does not rerun the omitted proprietary producer.
+
+To build the candidate source offline with an already installed Go toolchain:
+
+```sh
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTELEMETRY=off go test ./...
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTELEMETRY=off go build -trimpath -buildvcs=false -o aaesverify ./cmd/aaesverify
+python3 -B tools/check_cli.py ./aaesverify
+python3 -B -m unittest discover -s tools -p 'test_*.py'
+```
+
+## Previously published v0.2.0
+
 The public, Apache-2.0 offline reader for **`aaes.export/v2`** evidence.
 It runs on your machine without contacting AAES or any network service.
-The current supported software release is **v0.2.0**. Earlier export formats
+The locally recorded supported release is **v0.2.0**. Earlier export formats
 are retired and rejected. The software release number and wire-format number
 are independent.
 
@@ -45,14 +71,8 @@ public demonstration material, not a trusted production key.
 
 Follow the [offline-verification walkthrough](https://aaes.ai/demos.html#verification)
 alongside the [public sample pack](https://aaes.ai/library/verification.html#verify-locally).
-The written and recorded walkthroughs explain the clean-export result, the
-specified tamper test, and the trust assumptions.
-
-The [AI agent control evaluation kit](https://aaes.ai/guides/agent-control-evaluation-kit.html)
-provides a reusable control checklist and procurement questions, plus a Python
-standard-library runner for unchanged, edited-hash, wrong-key, and
-independence-required checks. Its recorded results concern only the synthetic
-export; they do not test agent execution or establish independent validation.
+The written walkthrough explains the clean-export result, the specified tamper
+test, and the trust assumptions. Video recordings will be added to that page.
 
 Optional flags: `--tsa-roots`, `--witness-trust`, `--require-independent`,
 `--allow-pre-anchor`, `--json`, and `--version`. `--require-independent`
@@ -63,6 +83,21 @@ Exports are bounded to 1 GiB and lines to 4 MiB.
 
 Exit codes: 0 means the integrity checks passed, 1 means refusal or a failed
 check, and 2 means usage or trust-file loading failure.
+
+## Usage reports
+
+```sh
+./aaesverify usage --usage-key <hex public key> usage-2026-10.json
+```
+
+`aaesverify usage` checks an `aaes.usage-report/1` file offline: its schema,
+its Ed25519 signature, the chain of usage-key rotation statements and the sums
+across tenants. `--usage-key` pins the key the deployment registered at
+onboarding; without it the report is checked against its own embedded key,
+which shows internal consistency only. `--export` names an export of the same
+deployment, and a report signed by that export's ledger key is refused. A valid
+signature shows which deployment produced a report. It does not show that the
+counts are complete.
 
 ## What it checks
 
@@ -80,8 +115,10 @@ assurance or certification verdict.
 
 ## Open format and other implementations
 
-[SPEC.md](SPEC.md) describes the implemented verification profile. The public
-[JSON Schema](schemas/export.schema.json) documents the v2 envelope. The
+[SPEC.md](SPEC.md) preserves the released v2 verification profile.
+[SPEC-V3.md](SPEC-V3.md) specifies the candidate v3 extension and result vocabulary. The public
+[JSON Schema](schemas/export.schema.json) documents the v3 envelope; the
+[retained v2 schema](schemas/export-v2.schema.json) describes older evidence. The
 [manifest schema](schemas/evidence-pack-manifest.schema.json) describes the
 separate pack inventory. Both ship under this repository's Apache-2.0 license.
 This is an openly documented implementation profile, not a claim of adoption
@@ -94,8 +131,9 @@ Sharing hash/types code with the producer creates common-mode risk. This reader
 is not an independently written second implementation.
 
 `aaes.records/v1` and `aaes.evidence-pack/1` are separate companion formats,
-not legacy exports. This slim reader has no `--records` flag and does not
-perform platform sidecar binding.
+not legacy exports. The local candidate adds `--export FILE --records FILE` for
+current record/2 re-sealing and binding under [RECORDS.md](RECORDS.md). Published
+v0.2.0 binaries do not provide this candidate feature.
 
 ## License and release policy
 

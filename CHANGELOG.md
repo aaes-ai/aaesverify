@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.3.0-rc.1 — unpublished candidate
+
+- Accept export v3 with the authenticated head algorithm and retain v2 reading;
+  continue refusing v0/v1 and unsupported schemas.
+- Add current record/2 re-sealing, evaluator-input commitments and one-to-one
+  export/receipt projection binding.
+- Authenticate the fixed evaluation-disclosure profile and consistent versioned
+  simulator metadata. Check shared suites 1.0.0, 2.0.0 and 3.0.0 in the public
+  comparison wrapper, including signed journal refusal/recovery observations.
+- Add native binary smoke checks for v3, records and disclosures, in addition to
+  the retained v2 checks. Each run generates its single-record synthetic vector
+  with a fresh key; no key file is committed. It is separate from the recorded
+  three-framework suite.
+- Timestamp verification requires the RFC 5816 signed attributes on the
+  token's SignerInfo: contentType id-ct-TSTInfo, a messageDigest over the
+  TSTInfo, and an ESSCertID or ESSCertIDv2 whose certHash (and issuerSerial,
+  when present) names the certificate that verified the signature (SPEC.md
+  section 8.2). Tokens signed directly over the TSTInfo are refused. This also
+  applies to retained v2 exports.
+- Refuse an unsupported algorithm inside any signed head, whatever the export's
+  schema label says.
+- `--records` and `--evaluation` report the same verdict as export mode, so gaps
+  and shredded fields are no longer reported as plain CONSISTENT.
+- `usage` caps report size at 16 MiB and refuses an `--export` that does not
+  verify instead of taking its ledger key on trust. `--evaluation` without
+  `--pubkey` prints an unpinned-signer warning.
+- Keep omitted source, receipt-chain verification, completeness, real effects and
+  independent attestation outside the claims established by local consistency.
+
 ## v0.2.0 — 2026-10-01
 
 - Adopt `aaes.export/v2` as the sole supported export format, with integer

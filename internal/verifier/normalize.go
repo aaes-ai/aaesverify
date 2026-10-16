@@ -21,8 +21,8 @@ var ErrUnsupportedSchema = errors.New("verifier: unsupported export schema")
 // verifies as. ok is false for every retired or unknown identifier.
 func NormalizeExportSchema(schema string) (canonical string, ok bool) {
 	switch schema {
-	case ExportSchemaV2:
-		return ExportSchemaV2, true
+	case ExportSchemaV2, ExportSchemaV3:
+		return schema, true
 	}
 	return "", false
 }

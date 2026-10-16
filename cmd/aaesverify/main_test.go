@@ -130,7 +130,7 @@ func TestRunWitnessTrustRejectsMalformedKey(t *testing.T) {
 }
 
 // TestRunAcceptsWitnessTrustFile proves a well-formed trust file loads and the
-// export still verifies: exit 0 and PASS.
+// export still verifies: exit 0 and CONSISTENT when no independent witness signed it.
 func TestRunAcceptsWitnessTrustFile(t *testing.T) {
 	file := writeWitnessTrust(t, `{"witness-1": "`+fixturePubKeyHex(t)+`"}`)
 	out, code := captureRun(t, []string{
@@ -139,7 +139,7 @@ func TestRunAcceptsWitnessTrustFile(t *testing.T) {
 		"--witness-trust", file,
 		"--allow-pre-anchor",
 	})
-	if code != 0 || !strings.Contains(out, "PASS") {
+	if code != 0 || !strings.Contains(out, "CONSISTENT") {
 		t.Fatalf("verify with witness trust exited %d:\n%s", code, out)
 	}
 }
@@ -245,7 +245,7 @@ func TestRunVerifiesCurrentFixture(t *testing.T) {
 				"--pubkey", fixturePubKeyPath(t),
 				"--allow-pre-anchor",
 			})
-			if code != 0 || !strings.Contains(out, "PASS") {
+			if code != 0 || !strings.Contains(out, "CONSISTENT") {
 				t.Fatalf("%s exited %d:\n%s", name, code, out)
 			}
 		})
@@ -318,7 +318,7 @@ func writePreAnchorExport(t *testing.T) string {
 
 func TestVersionAndUnexpectedArguments(t *testing.T) {
 	out, code := captureRun(t, []string{"--version"})
-	if code != 0 || !strings.Contains(out, "aaes.export/v2") {
+	if code != 0 || !strings.Contains(out, "aaes.export/v3") {
 		t.Fatalf("version: %d %s", code, out)
 	}
 	out, code = captureRun(t, []string{"stray"})

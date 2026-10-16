@@ -4,6 +4,12 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish the selected version tag after review and native checks'
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -28,7 +34,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version-file: go.mod
+          go-version: "1.27.2"
           cache: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -39,6 +45,7 @@ jobs:
           test "$(go env GOARCH)" = "${{ matrix.arch }}"
           go test -count=1 ./...
           go vet ./...
+          python -B -m unittest discover -s tools -p 'test_*.py'
       - name: Race tests
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: go test -race -count=1 ./...
@@ -58,7 +65,7 @@ jobs:
           path: dist/*
           if-no-files-found: error
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true && startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-24.04
     permissions:
@@ -81,7 +88,7 @@ jobs:
           out=Path('dist')
           files=sorted(out.glob('aaesverify-*'))
           assert len(files)==6
-          (out/'BUILD-INFO.txt').write_text('Verifier: '+os.environ['RELEASE_VERSION']+'\nSource revision: '+os.environ['SOURCE_REVISION']+'\nExport schema: aaes.export/v2\nLicense: Apache-2.0\n'+''.join(p.name+': '+p.read_text().strip()+'\n' for p in sorted(out.glob('toolchain-*.txt')))+'All six release binaries passed native tests and clean/negative CLI checks in this workflow.\n')
+          (out/'BUILD-INFO.txt').write_text('Verifier: '+os.environ['RELEASE_VERSION']+'\nSource revision: '+os.environ['SOURCE_REVISION']+'\nExport schemas: aaes.export/v3, aaes.export/v2\nEvaluation disclosure: aaes.evaluation-disclosure/1\nCurrent record/2 re-sealing and export binding supported; receipt-chain seals and omitted source unverified.\nLicense: Apache-2.0\n'+''.join(p.name+': '+p.read_text().strip()+'\n' for p in sorted(out.glob('toolchain-*.txt')))+'All six release binaries passed native tests and v2/v3, record-binding and synthetic-disclosure CLI checks in this workflow.\n')
           assert len(list(out.glob('toolchain-*.txt')))==6
           files.extend(sorted(out.glob('toolchain-*.txt')))
           files.append(out/'BUILD-INFO.txt')
@@ -90,4 +97,7 @@ jobs:
       - name: Publish tagged release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "aaesverify $GITHUB_REF_NAME" --notes-file CHANGELOG.md --latest
+        run: |
+          flags=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags=(--prerelease --latest=false); fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "aaesverify $GITHUB_REF_NAME" --notes-file CHANGELOG.md "${flags[@]}"

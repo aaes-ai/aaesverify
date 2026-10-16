@@ -286,6 +286,22 @@ func testTSA(t *testing.T) ([]byte, *x509.Certificate, *x509.CertPool, *ecdsa.Pr
 	return der, cert, pool, key
 }
 
+// tsTestSignedAttrs returns RFC 5816-conforming signedAttrs (contentType,
+// messageDigest, ESSCertIDv2) for tstDER and the signature over their DER SET.
+func tsTestSignedAttrs(t *testing.T, tstDER []byte, cert *x509.Certificate, key *ecdsa.PrivateKey) (asn1.RawValue, []byte) {
+	t.Helper()
+	attrs, err := hash.TimestampSignedAttrs(tstDER, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashed := sha256.Sum256(mustASN1(t, asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: attrs}))
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hashed[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asn1.RawValue{Class: 2, Tag: 0, IsCompound: true, Bytes: attrs}, sig
+}
+
 func signedTSToken(t *testing.T, digest []byte, cert *x509.Certificate, key *ecdsa.PrivateKey) []byte {
 	t.Helper()
 	tstDER, err := asn1.Marshal(tsInfo{
@@ -301,11 +317,7 @@ func signedTSToken(t *testing.T, digest []byte, cert *x509.Certificate, key *ecd
 	if err != nil {
 		t.Fatal(err)
 	}
-	hashed := sha256.Sum256(tstDER)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hashed[:])
-	if err != nil {
-		t.Fatal(err)
-	}
+	signedAttrs, sig := tsTestSignedAttrs(t, tstDER, cert, key)
 	sid, err := asn1.Marshal(struct {
 		Issuer       asn1.RawValue
 		SerialNumber *big.Int
@@ -317,6 +329,7 @@ func signedTSToken(t *testing.T, digest []byte, cert *x509.Certificate, key *ecd
 		Version:            1,
 		SID:                asn1.RawValue{FullBytes: sid},
 		DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
+		SignedAttrs:        signedAttrs,
 		SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
 		Signature:          sig,
 	})

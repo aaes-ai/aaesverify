@@ -12,13 +12,15 @@ import (
 	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
-// ExportSchemaV2 is the current JSONL schema. It matches audit.ExportSchema.
+// ExportSchemaV2 is the retained integer-amount JSONL schema.
 // The strings are duplicated because this package must not import the producer.
 const ExportSchemaV2 = "aaes.export/v2"
 
-// ExportSchema is the current schema identifier. Callers that bind a sidecar to
-// "the export this build writes" should use this constant.
-const ExportSchema = ExportSchemaV2
+// ExportSchemaV3 is the current schema identifier. Callers that bind a sidecar
+// to "the export this build writes" should use this constant.
+const ExportSchemaV3 = "aaes.export/v3"
+
+const ExportSchema = ExportSchemaV3
 
 // Line types.
 const (
@@ -42,13 +44,14 @@ type ExportFile struct {
 
 // HeaderView is the export header line.
 type HeaderView struct {
-	Schema     string        `json:"schema"`
-	LogID      string        `json:"log_id"`
-	TenantID   string        `json:"tenant_id"`
-	ExportedAt time.Time     `json:"exported_at"`
-	EntryCount uint64        `json:"entry_count"`
-	Head       hash.TreeHead `json:"head"`
-	PublicKey  string        `json:"public_key,omitempty"`
+	SignatureAlgorithm string        `json:"signature_algorithm,omitempty"`
+	Schema             string        `json:"schema"`
+	LogID              string        `json:"log_id"`
+	TenantID           string        `json:"tenant_id"`
+	ExportedAt         time.Time     `json:"exported_at"`
+	EntryCount         uint64        `json:"entry_count"`
+	Head               hash.TreeHead `json:"head"`
+	PublicKey          string        `json:"public_key,omitempty"`
 	// PreAnchor is the honest flag for an export written before the first
 	// anchor interval. Without it, an anchorless export fails: the format
 	// supports anchors, so their absence is incomplete evidence rather than a
@@ -100,17 +103,21 @@ type AnchorView struct {
 type exportLine struct {
 	Type string `json:"type"`
 	EntryView
-	Schema     string         `json:"schema"`
-	LogID      string         `json:"log_id"`
-	ExportedAt time.Time      `json:"exported_at"`
-	EntryCount uint64         `json:"entry_count"`
-	Head       *hash.TreeHead `json:"head"`
-	PublicKey  string         `json:"public_key"`
-	PreAnchor  bool           `json:"pre_anchor"`
-	KeyID      string         `json:"key_id"`
-	Algorithm  string         `json:"algorithm"`
-	Timestamp  *TimestampView `json:"timestamp"`
-	Witnesses  []WitnessView  `json:"witnesses"`
+	SignatureAlgorithm string         `json:"signature_algorithm"`
+	Schema             string         `json:"schema"`
+	LogID              string         `json:"log_id"`
+	ExportedAt         time.Time      `json:"exported_at"`
+	EntryCount         uint64         `json:"entry_count"`
+	Head               *hash.TreeHead `json:"head"`
+	PublicKey          string         `json:"public_key"`
+	PreAnchor          bool           `json:"pre_anchor"`
+	KeyID              string         `json:"key_id"`
+	Algorithm          string         `json:"algorithm"`
+	Timestamp          *TimestampView `json:"timestamp"`
+	Witnesses          []WitnessView  `json:"witnesses"`
+	// AmountUSD only detects the retired floating-point amount field, which
+	// fails closed when present on an entry line, even as null.
+	AmountUSD json.RawMessage `json:"amount_usd"`
 }
 
 // LoadExport reads an exported JSONL log from disk.
@@ -197,13 +204,14 @@ func decodeHeaderLine(raw []byte, sawHeader bool, lineNo int) (HeaderView, error
 		return HeaderView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
 	}
 	hdr := HeaderView{
-		Schema:     line.Schema,
-		LogID:      line.LogID,
-		TenantID:   line.TenantID,
-		ExportedAt: line.ExportedAt,
-		EntryCount: line.EntryCount,
-		PublicKey:  line.PublicKey,
-		PreAnchor:  line.PreAnchor,
+		SignatureAlgorithm: line.SignatureAlgorithm,
+		Schema:             line.Schema,
+		LogID:              line.LogID,
+		TenantID:           line.TenantID,
+		ExportedAt:         line.ExportedAt,
+		EntryCount:         line.EntryCount,
+		PublicKey:          line.PublicKey,
+		PreAnchor:          line.PreAnchor,
 	}
 	if line.Head != nil {
 		hdr.Head = *line.Head
@@ -226,18 +234,18 @@ func decodeAnchorLine(raw []byte, lineNo int) (AnchorView, error) {
 // decodeEntryLine reads only the current wire format. Retired schemas and
 // the legacy floating-point amount field fail closed, including mixed layouts.
 func decodeEntryLine(raw []byte, schema string, lineNo int) (EntryView, error) {
-	if schema != ExportSchemaV2 {
-		return EntryView{}, fmt.Errorf("%w: line %d: %q; re-export as %s", ErrSchema, lineNo, schema, ExportSchemaV2)
+	if schema != ExportSchemaV2 && schema != ExportSchemaV3 {
+		return EntryView{}, fmt.Errorf("%w: line %d: %q; re-export as %s", ErrSchema, lineNo, schema, ExportSchema)
 	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &keys); err != nil {
-		return EntryView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
-	}
-	if _, exists := keys["amount_usd"]; exists {
-		return EntryView{}, fmt.Errorf("%w: line %d: legacy amount_usd is not valid in %s", ErrSchema, lineNo, ExportSchemaV2)
-	}
+	// One decode serves both checks. A syntax error populates nothing, so it
+	// still reports as malformed; a type error elsewhere on a line that also
+	// carries amount_usd still reports the retired field first.
 	var line exportLine
-	if err := json.Unmarshal(raw, &line); err != nil {
+	err := json.Unmarshal(raw, &line)
+	if line.AmountUSD != nil {
+		return EntryView{}, fmt.Errorf("%w: line %d: legacy amount_usd is not valid in %s", ErrSchema, lineNo, schema)
+	}
+	if err != nil {
 		return EntryView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
 	}
 	return line.EntryView, nil

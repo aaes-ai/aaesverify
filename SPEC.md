@@ -1,3 +1,5 @@
+> The v2 verification profile, first published with v0.2.0 and read by this candidate. Since v0.2.0, section 8.2 requires RFC 5816 signed attributes on timestamp tokens, and section 6's head algorithm is refused on every schema; the [changelog](CHANGELOG.md) lists both. Candidate source also supports authenticated-head v3 exports; see [SPEC-V3.md](SPEC-V3.md). No new public binary release is claimed.
+
 # Open verification specification — `aaes.export/v2`
 
 **Status:** published specification of the verification surface, grounded in the
@@ -12,14 +14,15 @@ Only `aaes.export/v2` is supported. Retired v0/v1 exports must be regenerated
 from the original journal using the current writer, never relabelled.
 
 Every rule below names the source file that implements it. Where this document
-and the code disagree, **the code is wrong about itself and this document is
-wrong about the code: treat the disagreement as a defect and report it.** The
+and the code disagree, **report the discrepancy as a defect so the
+implementation and specification can be reconciled.** The
 reference implementation is `internal/verifier/` — a package that may
 import only the Go standard library, `internal/hash` and `internal/types`, a
 constraint the build enforces (`TestNoForbiddenImports` and the
-closure-walking `TestNoForbiddenImportsInTheClosure`). A verifier that shares
-code with the producer shares its bugs and its incentives; that is why the
-reference verifier is small, stdlib-only and readable in an afternoon.
+closure-walking `TestNoForbiddenImportsInTheClosure`). Sharing hash and type code with the producer creates a common failure risk:
+a defect in shared code can affect both writing and verification. The small
+reference verifier makes its checks easier to inspect; it is not an
+independently written second implementation.
 
 Nothing in this document is a claim that any particular deployment has
 witnesses, a TSA, or even a signer. Section 12 states what verification does
@@ -136,8 +139,8 @@ chain_i = SHA256Hex(chain_{i-1}   || 0x00 || preimage_i)   # chain_{i-1} as ASCI
 Reversing, dropping or inserting an entry changes every later chain hash.
 Verification walks the whole export from genesis and recomputes every link
 (`verifier/chain.go`, `checkChain`); a partial window cannot match the head
-root, which is deliberate: a log that can show you an arbitrary slice is not
-a log.
+root. This reader requires a complete export so it can check the signed
+root; independently verifiable subsets would need their own proof format.
 
 ## 5. The Merkle tree
 
@@ -389,12 +392,34 @@ export — accepts only when **all** of the following hold
    must equal that digest, and the recorded `time` must equal the token's
    `genTime` to the second. Failures are `ErrRFC3161Binding`.
 3. **CMS signature.** Only SHA-256-digest SignerInfos are acceptable: CMS
-   SignedData with SHA-256 digests, signed by ECDSA P-256, RSA or Ed25519;
-   when signedAttrs are present the messageDigest attribute must equal
-   SHA-256 of the encapsulated TSTInfo. The SignerInfos SET is searched for a
-   signer whose signature verifies under a certificate the token carries
-   (matched via the SignerInfo SID); an empty SET is refused. Other algorithm
-   combinations are refused, not approximated — `ErrRFC3161Signature`.
+   SignedData with SHA-256 digests, signed by ECDSA P-256, RSA or Ed25519.
+   The SignerInfos SET is searched for a signer whose signature verifies
+   under a certificate the token carries (matched via the SignerInfo SID);
+   an empty SET is refused. Other algorithm combinations are refused, not
+   approximated — `ErrRFC3161Signature`. The SignerInfo must carry
+   signedAttrs (RFC 5652 §5.3, profiled by RFC 3161 §2.4.2 and RFC 5816),
+   and the signature must verify over their DER SET; a signature directly
+   over the TSTInfo is refused. The signedAttrs must hold:
+   - `contentType` (`1.2.840.113549.1.9.3`) equal to `id-ct-TSTInfo`;
+   - `messageDigest` (`1.2.840.113549.1.9.4`) equal to SHA-256 of the
+     encapsulated TSTInfo;
+   - `signingCertificate` (ESSCertID, `1.2.840.113549.1.9.16.2.12`, RFC 2634,
+     SHA-1 certHash) and/or `signingCertificateV2` (ESSCertIDv2,
+     `1.2.840.113549.1.9.16.2.47`, RFC 5035; hashAlgorithm SHA-256 by default,
+     or a stated SHA-384/SHA-512). The first ESSCertID(v2) in each attribute
+     present must carry the certHash of the certificate the signature
+     verified under, and its `issuerSerial`, when present, must name that
+     certificate's issuer (as a directoryName) and serial number. At least
+     one of the two attributes must be present, and every one present must
+     bind.
+
+   Each of these attributes must occur once with exactly one value.
+   Undecodable attributes are `ErrRFC3161Malformed`; a missing or
+   mismatched attribute is `ErrRFC3161Signature`. One implementation,
+   `hash.VerifyTimestampSignedAttrs` (`internal/hash/tsattrs.go`), is
+   shared by `audit.VerifyRFC3161Token`, `witness.HTTPTimestamp.VerifyWithTrust`
+   and the offline verifier, so the common failure risk stated at the top of
+   this document applies to this check too.
    Verification order is binding → signature → purpose → chain, so a trust
    error is only reachable for a token whose signature already verifies.
 4. **Purpose.** If the signer certificate carries any EKU at all, the list
@@ -435,8 +460,10 @@ sentence:
   option.
 - **No revocation checking.** CRL/OCSP is never consulted. A compromised TSA
   key that has been revoked but not yet expired still chains.
-- **No ESSCertID/ESSCertIDv2 binding.** The signer is matched by SignerInfo
-  SID against certificates the token carries.
+- **Signer binding is by certificate hash, not by policy.** The ESSCertID or
+  ESSCertIDv2 signed attribute must name the certificate the signature
+  verified under (section 8.2, step 3); the optional `policies` field of
+  those attributes is not evaluated.
 - **No policy-OID evaluation.** Go's stdlib cannot evaluate RFC 3161
   certificate-policy OIDs; the TSTInfo policy OID is recorded, not evaluated.
 - **No countersignature or unsigned-attribute processing.** This is not full
@@ -583,8 +610,8 @@ does **not** establish:
    *claimed* time; the TSA's clock accuracy and honesty are trust decisions.
    A noop token proves nothing and says so.
 4. **TSA key hygiene.** No revocation checking: a revoked-but-unexpired TSA
-   certificate still chains. No ESSCertID binding; no policy-OID evaluation;
-   SHA-256 CMS digests only (section 8.4).
+   certificate still chains. No policy-OID evaluation; SHA-256 CMS digests
+   only (section 8.4).
 5. **Completeness of the world.** Verification covers the entries the export
    contains. Gaps are legal only under tombstones; but an event the journal
    never recorded — an action AAES was bypassed for, a connector that lied
@@ -594,8 +621,8 @@ does **not** establish:
    nobody can read after the key is destroyed; hashes still verify, and the
    destruction record proves recording, not the act.
 7. **Key provenance.** `--pubkey` proves the head verifies under the key you
-   supplied; where you got that key is your out-of-band problem. The embedded
-   key proves internal consistency only.
+   supplied. Obtain the key separately through a channel trusted for the
+   deployment under review. An embedded key proves internal consistency only.
 8. **Anything about the future.** An export has a date. Entries appended
    after the head are not covered; anchors are cadence-bound (default 15
    minutes), so very recent history is covered only by the chain and the head

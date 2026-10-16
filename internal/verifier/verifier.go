@@ -47,7 +47,7 @@ var (
 //
 // v2 entries carry amount_minor and amount_currency (both omitempty): thirteen
 // preimage fields when both amount fields are present, eleven when both are omitted.
-// Only aaes.export/v2 is supported. The schema is never inferred from content.
+// Current v3 and retained v2 are supported. The schema is never inferred from content.
 type EntryView struct {
 	TenantID       string         `json:"tenant_id"`
 	Sequence       uint64         `json:"sequence"`

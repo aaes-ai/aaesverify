@@ -56,6 +56,36 @@ type Result struct {
 	ShredEvents []ShredEventView `json:"shred_events,omitempty"`
 	Warnings    []string         `json:"warnings,omitempty"`
 	Errors      []string         `json:"errors,omitempty"`
+	// ResultSchema names this result document. aaes.verify-result/2 is the
+	// verdict vocabulary that reserves PASS for independent attestation.
+	ResultSchema string `json:"result_schema,omitempty"`
+	// Verdict is the same headline the text renderer prints. PASS requires an
+	// independent witness or an independent timestamp. A witness-less success
+	// is CONSISTENT.
+	Verdict string `json:"verdict,omitempty"`
+}
+
+// ResultSchemaV2 is the verifier result document that distinguishes a
+// consistency check from independent attestation.
+const ResultSchemaV2 = "aaes.verify-result/2"
+
+// IndependentAttestation reports a witness or timestamp pin that is not the
+// export's own signer.
+func (r *Result) IndependentAttestation() bool {
+	return r != nil && (r.IndependentWitnesses > 0 || r.TimestampsIndependent > 0)
+}
+
+// IntegrityHeadline is PASS only when the check holds and an independent pin
+// is present. A witness-less success is CONSISTENT. A failed or absent check
+// is FAIL, even if attestation facts were recorded alongside the failure.
+func (r *Result) IntegrityHeadline() string {
+	if r == nil || !r.OK {
+		return "FAIL"
+	}
+	if r.IndependentAttestation() {
+		return "PASS"
+	}
+	return "CONSISTENT"
 }
 
 // GapView names one sequence range the export does not contain, and the

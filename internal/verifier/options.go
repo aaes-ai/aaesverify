@@ -32,7 +32,7 @@ type VerifyOptions struct {
 func VerifyExportReaderResult(r io.Reader, pubKey []byte, opts VerifyOptions) *Result {
 	exp, err := LoadExportReader(r)
 	if err != nil {
-		return &Result{OK: false, Errors: []string{err.Error()}}
+		return &Result{OK: false, ResultSchema: ResultSchemaV2, Verdict: "FAIL", Errors: []string{err.Error()}}
 	}
 	return verifyParsed(exp, pubKey, opts)
 }
@@ -47,7 +47,7 @@ func VerifyExportReaderWithOptions(r io.Reader, pubKey []byte, opts VerifyOption
 func VerifyExportWithOptions(path string, pubKey []byte, opts VerifyOptions) (*Result, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return &Result{Path: path, OK: false, Errors: []string{err.Error()}}, fmt.Errorf("verifier: open export: %w", err)
+		return &Result{Path: path, OK: false, ResultSchema: ResultSchemaV2, Verdict: "FAIL", Errors: []string{err.Error()}}, fmt.Errorf("verifier: open export: %w", err)
 	}
 	defer f.Close()
 	res := VerifyExportReaderResult(f, pubKey, opts)

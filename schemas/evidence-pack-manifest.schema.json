@@ -23,9 +23,10 @@
     },
     "export_schema": {
       "enum": [
-        "aaes.export/v2"
+        "aaes.export/v2",
+        "aaes.export/v3"
       ],
-      "description": "Schema of the bound export: only aaes.export/v2 is supported. The manifest retains its independently versioned aaes.evidence-pack/1 identifier."
+      "description": "Exact schema of the bound export: current v3 or retained v2. The manifest retains its independently versioned aaes.evidence-pack/1 identifier."
     },
     "records_schema": {
       "const": "aaes.records/v1"
