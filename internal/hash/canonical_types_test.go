@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestCanonicalJSONCoversScalarAndCompoundForms(t *testing.T) {
+func TestCanonicalJSONEncodesScalarAndCompoundForms(t *testing.T) {
 	got, err := CanonicalJSON(nil)
 	if err != nil {
 		t.Fatalf("nil: %v", err)
@@ -241,7 +241,7 @@ func TestCanonicalJSONRejectsAbsurdExponents(t *testing.T) {
 	}
 }
 
-func TestCanonicalJSONCoversSizedNumericTypes(t *testing.T) {
+func TestCanonicalJSONEncodesSizedNumericTypes(t *testing.T) {
 	for _, tc := range []struct {
 		in   any
 		want string

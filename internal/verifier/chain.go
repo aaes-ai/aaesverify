@@ -18,8 +18,27 @@ func HeadPayload(h hash.TreeHead) []byte {
 	return b
 }
 
-// VerifyTreeHead checks an Ed25519 signature over a tree head.
-func VerifyTreeHead(h hash.TreeHead, pubKey []byte) error {
+// HeadSignatureAlgorithm is the only algorithm a tree-head signature may name.
+const HeadSignatureAlgorithm = "ed25519"
+
+// RefuseUnknownHeadAlgorithm rejects a head that names an algorithm this
+// verifier does not check. An empty name is the historical Ed25519 head.
+func RefuseUnknownHeadAlgorithm(alg string) error {
+	if alg != "" && alg != HeadSignatureAlgorithm {
+		return fmt.Errorf("%w: head algorithm %q is not %s", ErrSignature, alg, HeadSignatureAlgorithm)
+	}
+	return nil
+}
+
+// VerifyTreeHead checks an Ed25519 signature over a tree head. The algorithm
+// named inside the signed head is refused on every schema, because the schema
+// label itself is unsigned and can be relabelled.
+func VerifyTreeHead(h hash.TreeHead, pubKey []byte, algorithms ...string) error {
+	for _, algorithm := range append([]string{h.Algorithm}, algorithms...) {
+		if err := RefuseUnknownHeadAlgorithm(algorithm); err != nil {
+			return err
+		}
+	}
 	if len(pubKey) != ed25519.PublicKeySize {
 		return fmt.Errorf("%w: public key is %d bytes, want %d", ErrSignature, len(pubKey), ed25519.PublicKeySize)
 	}
@@ -48,10 +67,17 @@ type chainState struct {
 // checkChain recomputes everything derivable from the entries and the head,
 // reporting each class of failure separately so a Result can show an auditor
 // exactly which check failed rather than one opaque "invalid".
-func checkChain(entries []EntryView, head hash.TreeHead, pubKey []byte) chainState {
+func checkChain(entries []EntryView, head hash.TreeHead, pubKey []byte, algorithms ...string) chainState {
 	st := chainState{contiguous: true}
+	// The head signature covers only the head, so it is checked even for an
+	// empty log rather than left reporting a pass nobody verified.
+	if len(pubKey) > 0 {
+		st.sigErr = VerifyTreeHead(head, pubKey, algorithms...)
+	}
 	if len(entries) == 0 {
 		st.chainErr = ErrEmptyLog
+		// No root was recomputed, so root_ok must not claim one was.
+		st.rootErr = fmt.Errorf("%w: no entries to recompute the head root from", ErrRoot)
 		return st
 	}
 	st.firstSeq = entries[0].Sequence
@@ -92,9 +118,6 @@ func checkChain(entries []EntryView, head hash.TreeHead, pubKey []byte) chainSta
 		st.rootErr = fmt.Errorf("%w: head root is %s, recomputed %s", ErrRoot, head.RootHash, st.recomputed)
 	} else if head.Index != entries[len(entries)-1].Sequence {
 		st.rootErr = fmt.Errorf("%w: head index is %d, last entry sequence is %d", ErrRoot, head.Index, entries[len(entries)-1].Sequence)
-	}
-	if len(pubKey) > 0 {
-		st.sigErr = VerifyTreeHead(head, pubKey)
 	}
 	return st
 }

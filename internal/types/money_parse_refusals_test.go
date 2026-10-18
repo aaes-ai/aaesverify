@@ -10,11 +10,26 @@ func TestMoneyConstructorsRefuseBadInput(t *testing.T) {
 	if _, err := NewMoney(1, "no"); err == nil || !strings.Contains(err.Error(), "currency") {
 		t.Fatalf("NewMoney bad currency = %v", err)
 	}
-	if m := USDM(math.NaN()); m.Minor != math.MaxInt64 || m.Currency != DefaultCurrency {
-		t.Fatalf("USDM(NaN) = %+v", m)
-	}
-	if m := USDM(math.Inf(1)); m.Minor != math.MaxInt64 {
-		t.Fatalf("USDM(+Inf) = %+v", m)
+	// Non-finite input is never a permissive maximum: it becomes a negative
+	// amount every validator refuses. Finite out-of-range input saturates with
+	// its sign instead of relying on the platform's float-to-int conversion.
+	for _, c := range []struct {
+		major float64
+		want  int64
+	}{
+		{math.NaN(), math.MinInt64},
+		{math.Inf(1), math.MinInt64},
+		{math.Inf(-1), math.MinInt64},
+		{1e17, math.MaxInt64},
+		{1e307, math.MaxInt64},
+		{-1e17, math.MinInt64},
+		{-1e307, math.MinInt64},
+		{-92233720368547758.08, math.MinInt64},
+		{1.5, 150},
+	} {
+		if m := USDM(c.major); m.Minor != c.want || m.Currency != DefaultCurrency {
+			t.Fatalf("USDM(%v) = %+v, want minor %d", c.major, m, c.want)
+		}
 	}
 	if _, err := ParseMajor("1.00", "no"); err == nil || !strings.Contains(err.Error(), "currency") {
 		t.Fatalf("ParseMajor bad currency = %v", err)

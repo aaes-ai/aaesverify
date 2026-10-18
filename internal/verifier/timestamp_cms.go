@@ -5,11 +5,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
 	"math/big"
+
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 func tsCertificates(field asn1.RawValue) ([][]byte, error) {
@@ -115,59 +116,23 @@ func tsMatchSigner(si tsSignerInfo, certs []*x509.Certificate) *x509.Certificate
 	return nil
 }
 
+// tsVerifySigner requires the RFC 3161/5816 signed-attribute profile
+// (hash.VerifyTimestampSignedAttrs: contentType, messageDigest and an
+// ESSCertID or ESSCertIDv2 naming cert) and a signature over their DER SET.
 func tsVerifySigner(si tsSignerInfo, cert *x509.Certificate, eContent []byte) error {
 	algo, err := tsSigAlg(si.DigestAlgorithm.Algorithm, cert.PublicKey)
 	if err != nil {
 		return err
 	}
-	signed := eContent
-	if len(si.SignedAttrs.Bytes) > 0 || len(si.SignedAttrs.FullBytes) > 0 {
-		if err := tsCheckMessageDigest(si.SignedAttrs.Bytes, eContent); err != nil {
-			return err
-		}
-		set, err := asn1.Marshal(asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: si.SignedAttrs.Bytes})
-		if err != nil {
-			return fmt.Errorf("signedAttrs could not be re-encoded: %v", err)
-		}
-		signed = set
+	if err := hash.VerifyTimestampSignedAttrs(si.SignedAttrs.Bytes, eContent, cert); err != nil {
+		return err
+	}
+	signed, err := asn1.Marshal(asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: si.SignedAttrs.Bytes})
+	if err != nil {
+		return fmt.Errorf("signedAttrs could not be re-encoded: %v", err)
 	}
 	if err := cert.CheckSignature(algo, signed, si.Signature); err != nil {
 		return fmt.Errorf("the CMS SignerInfo signature does not verify: %v", err)
-	}
-	return nil
-}
-
-func tsCheckMessageDigest(attrBytes, eContent []byte) error {
-	want := sha256.Sum256(eContent)
-	rest := attrBytes
-	found := false
-	for len(rest) > 0 {
-		var attr struct {
-			Type   asn1.ObjectIdentifier
-			Values []asn1.RawValue `asn1:"set"`
-		}
-		next, err := asn1.Unmarshal(rest, &attr)
-		if err != nil {
-			return fmt.Errorf("signedAttrs do not parse: %v", err)
-		}
-		rest = next
-		if !attr.Type.Equal(oidMessageDigestV) {
-			continue
-		}
-		if len(attr.Values) == 0 {
-			return fmt.Errorf("the message-digest signed attribute has no value")
-		}
-		var got []byte
-		if _, err := asn1.Unmarshal(attr.Values[0].FullBytes, &got); err != nil {
-			return fmt.Errorf("the message-digest signed attribute is not an OCTET STRING: %v", err)
-		}
-		if !bytes.Equal(got, want[:]) {
-			return fmt.Errorf("the message-digest signed attribute does not match the encapsulated content")
-		}
-		found = true
-	}
-	if !found {
-		return fmt.Errorf("signedAttrs are present but carry no message-digest attribute")
 	}
 	return nil
 }

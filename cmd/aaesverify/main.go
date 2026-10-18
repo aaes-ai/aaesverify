@@ -1,6 +1,6 @@
 // Command aaesverify is the slim offline verifier an examiner can run without
-// the operator CLI. Flags match aaesctl verify. It never takes --records:
-// sidecar binding is aaesctl evidence verify.
+// the operator CLI. Its public record reader is documented in RECORDS.md.
+// "aaesverify usage <report>" checks a signed usage report (ADR-029).
 package main
 
 import (
@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aaes-ai/aaesverify/internal/evaluation"
 	"github.com/aaes-ai/aaesverify/internal/verifier"
 )
 
@@ -20,13 +21,25 @@ import (
 var version = "dev"
 var revision = "unknown"
 
-func main() { os.Exit(run(os.Args[1:])) }
+func main() { os.Exit(dispatch(os.Args[1:])) }
+
+// dispatch routes the usage subcommand; everything else is export
+// verification.
+func dispatch(args []string) int {
+	if len(args) > 0 && args[0] == "usage" {
+		return runUsage(args[1:])
+	}
+	return run(args)
+}
 
 func run(args []string) int {
 	fs := flag.NewFlagSet("aaesverify", flag.ContinueOnError)
 	showVersion := fs.Bool("version", false, "print verifier release, source revision and supported export schema")
+	recordsPath := fs.String("records", "", "current record/2 sidecar to re-seal and bind to --export (see RECORDS.md)")
 	exportPath := fs.String("export", "", "exported JSONL log to verify")
-	pubPath := fs.String("pubkey", "", "Ed25519 public key file (hex or base64); omit to use the key embedded in the export")
+	evaluationPath := fs.String("evaluation", "", "disclosed evaluation directory; authenticate artifacts, re-seal records and bind the v3 export")
+	receiptPath := fs.String("receipt", "", "aaes.trust-receipt/v1 JSON document to verify")
+	pubPath := fs.String("pubkey", "", "Ed25519 public key file (hex or base64); required with --receipt, optional for an export with an embedded key")
 	tsaRootsPath := fs.String("tsa-roots", "", "PEM bundle of TSA trust roots; without this, timestamps are checked but independence is not claimed")
 	witnessTrustPath := fs.String("witness-trust", "", "JSON object mapping trusted witness IDs to hex/base64 public keys obtained independently of the export")
 	requireIndependent := fs.Bool("require-independent", false, "require a countersignature or timestamp verified against supplied witness keys or TSA roots")
@@ -46,23 +59,31 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "aaesverify: unexpected positional arguments")
 		return 2
 	}
-	if *exportPath == "" {
-		fmt.Fprintln(os.Stderr, "aaesverify: --export is required")
+	if *receiptPath != "" && (*evaluationPath != "" || *recordsPath != "") {
+		fmt.Fprintln(os.Stderr, "aaesverify: --receipt cannot be combined with --evaluation or --records")
 		return 2
 	}
-
-	var pubKey []byte
-	if *pubPath != "" {
-		raw, err := os.ReadFile(*pubPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "aaesverify: read public key: %v\n", err)
-			return 2
-		}
-		pubKey, err = verifier.ParsePublicKey(string(raw))
-		if err != nil {
+	if (*evaluationPath != "" && (*exportPath != "" || *recordsPath != "")) || (*recordsPath != "" && *exportPath == "") {
+		fmt.Fprintln(os.Stderr, "aaesverify: choose --export [--records] or --evaluation")
+		return 2
+	}
+	if *exportPath == "" && *evaluationPath == "" && *receiptPath == "" {
+		fmt.Fprintln(os.Stderr, "aaesverify: --export is required (or --receipt)")
+		return 2
+	}
+	if *receiptPath != "" {
+		if err := validateCommandMode(*exportPath, *receiptPath, *pubPath, *tsaRootsPath, *witnessTrustPath, *requireIndependent, *allowPreAnchor); err != nil {
 			fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 			return 2
 		}
+	}
+	pubKey, err := loadCommandPublicKey(*pubPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
+		return 2
+	}
+	if *receiptPath != "" {
+		return runTrustReceipt(*receiptPath, pubKey, *jsonOnly)
 	}
 
 	tsaRoots, err := loadTSARoots(*tsaRootsPath)
@@ -75,9 +96,28 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 		return 2
 	}
+	if *evaluationPath != "" {
+		result, err := evaluation.Verify(*evaluationPath, pubKey, verifier.VerifyOptions{TSARoots: tsaRoots, TrustedWitnessKeys: witnessKeys, RequireIndependent: *requireIndependent, AllowPreAnchor: *allowPreAnchor})
+		if err != nil {
+			result = map[string]any{"schema": "aaes.disclosed-evaluation-verification/1", "ok": false, "verdict": "FAIL", "error": err.Error()}
+		}
+		if !*jsonOnly {
+			fmt.Println("Disclosed evaluation verification (omitted source and receipt-chain seals are outside this profile)")
+			if err == nil && len(pubKey) == 0 {
+				fmt.Println("warning: no --pubkey was supplied; the bundled signer key proves internal consistency only")
+			}
+		}
+		if encodeErr := json.NewEncoder(os.Stdout).Encode(result); encodeErr != nil {
+			return 1
+		}
+		if err != nil {
+			return 1
+		}
+		return 0
+	}
 	normalized, err := normalizeExportFile(*exportPath)
 	if err != nil {
-		res := &verifier.Result{Path: *exportPath, OK: false, Errors: []string{err.Error()}}
+		res := &verifier.Result{Path: *exportPath, OK: false, ResultSchema: verifier.ResultSchemaV2, Verdict: "FAIL", Errors: []string{err.Error()}}
 		if perr := printVerifyResult(res, *jsonOnly); perr != nil {
 			fmt.Fprintf(os.Stderr, "aaesverify: %v\n", perr)
 		}
@@ -88,6 +128,36 @@ func run(args []string) int {
 		TSARoots: tsaRoots, TrustedWitnessKeys: witnessKeys, RequireIndependent: *requireIndependent, AllowPreAnchor: *allowPreAnchor,
 	})
 	res.Path = *exportPath
+	if *recordsPath != "" {
+		count := 0
+		var bindErr error
+		if res.OK {
+			var raw []byte
+			raw, bindErr = evaluation.ReadRecordsFile(*recordsPath)
+			if bindErr == nil {
+				count, bindErr = evaluation.VerifyRecords(normalized, raw)
+			}
+			if bindErr != nil {
+				res.OK = false
+				res.Verdict = "FAIL"
+				res.Errors = append(res.Errors, bindErr.Error())
+			}
+		}
+		result := map[string]any{"ok": res.OK, "verdict": res.Verdict, "sealed_records_resealed": res.OK, "sealed_sidecar_binding_verified": res.OK, "resealed_record_count": count, "receipt_chain_verified": false, "export": res}
+		if !res.OK {
+			result["verdict"] = "FAIL"
+		}
+		if !*jsonOnly {
+			fmt.Println("Record/2 re-sealing and export binding")
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return 1
+		}
+		if !res.OK {
+			return 1
+		}
+		return 0
+	}
 	if err := printVerifyResult(res, *jsonOnly); err != nil {
 		fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 		return 1
@@ -98,6 +168,7 @@ func run(args []string) int {
 	return 0
 }
 
+// normalizeExportFile checks the supported format without rewriting bytes.
 func normalizeExportFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -151,13 +222,17 @@ func printVerifyResult(res *verifier.Result, jsonOnly bool) error {
 	if !jsonOnly {
 		fmt.Println(renderVerify(res))
 	}
-	b, err := verifier.MarshalResult(res)
+	b, err := marshalVerifyResult(res)
 	if !jsonOnly {
 		fmt.Println("--- json ---")
 	}
 	fmt.Println(string(b))
 	return err
 }
+
+// marshalVerifyResult is verifier.MarshalResult in production; tests replace it
+// so a marshal fallback makes run exit 1.
+var marshalVerifyResult = verifier.MarshalResult
 
 func renderVerify(res *verifier.Result) string {
 	var b strings.Builder
@@ -177,12 +252,23 @@ func renderVerify(res *verifier.Result) string {
 	line("head signature", fmt.Sprintf("%s (%s)", verdict(res.SignatureOK), keySourceText(res.KeySource)))
 	line("anchors", fmt.Sprintf("%d (%d verified, %d external timestamps of which %d independent, %d independent witnesses)",
 		res.AnchorCount, res.AnchorsVerified, res.TimestampsChecked, res.TimestampsIndependent, res.IndependentWitnesses))
-	result := "PASS"
+	for i, w := range res.Warnings {
+		if i == 0 {
+			line("warnings", w)
+		} else {
+			line("", w)
+		}
+	}
+	var result string
 	switch {
 	case !res.OK:
 		result = "FAIL"
 	case res.Gapped || len(res.Gaps) > 0:
 		result = fmt.Sprintf("OK with gaps (%d range(s))", len(res.Gaps))
+	case len(res.ShredEvents) > 0:
+		result = "OK WITH SHREDDED FIELDS"
+	default:
+		result = res.IntegrityHeadline()
 	}
 	line("result", result)
 	return strings.TrimRight(b.String(), "\n")

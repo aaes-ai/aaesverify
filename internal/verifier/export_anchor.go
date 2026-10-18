@@ -24,7 +24,7 @@ type verifyEvidence struct {
 // failed anchor is recorded and the walk moves on, so one Result can name
 // every bad anchor rather than only the first.
 func checkExportAnchor(exp *ExportFile, res *Result, opts VerifyOptions, key []byte, leaves []string, wantLogID string, i int, a AnchorView, independentSeen *witnessIdentities, ev *verifyEvidence) {
-	if err := VerifyTreeHead(a.Head, key); err != nil {
+	if err := VerifyTreeHead(a.Head, key, a.Algorithm); err != nil {
 		res.AnchorsOK = false
 		res.addError("anchor %d: %v", i, err)
 		return
@@ -60,23 +60,23 @@ func checkExportAnchor(exp *ExportFile, res *Result, opts VerifyOptions, key []b
 			i, a.Head.RootHash, a.Head.TreeSize, prefixRoot)
 		return
 	}
-	res.AnchorsVerified++
 	// Independence is a claim about the FINAL published head: a witness
 	// that countersigned an earlier prefix vouched for that prefix only,
 	// and the entries appended since are unwitnessed. Such cosignatures
 	// stay visible in WitnessesVerified but cannot satisfy
 	// RequireIndependent.
 	coversFinal := headCoversFinal(a.Head, exp.Header.Head)
-	if !checkAnchorTimestamp(i, a, res, opts, ev) {
+	if !checkAnchorTimestamp(i, a, res, opts, ev, coversFinal) {
 		return
 	}
+	res.AnchorsVerified++
 	checkAnchorWitnesses(i, a, res, key, opts, coversFinal, independentSeen, ev)
 }
 
 // checkAnchorTimestamp checks the external timestamp one anchor carries and
 // reports whether the anchor survived. A digest that does not cover this
 // head fails the whole anchor, so its witnesses are not counted either.
-func checkAnchorTimestamp(i int, a AnchorView, res *Result, opts VerifyOptions, ev *verifyEvidence) bool {
+func checkAnchorTimestamp(i int, a AnchorView, res *Result, opts VerifyOptions, ev *verifyEvidence, coversFinal bool) bool {
 	if a.Timestamp == nil {
 		return true
 	}
@@ -95,8 +95,10 @@ func checkAnchorTimestamp(i int, a AnchorView, res *Result, opts VerifyOptions, 
 			}
 		} else if err := verifyTimestampWithTrust(*a.Timestamp, opts.TSARoots, time.Time{}); err != nil {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("anchor %d: timestamp is not independent: %v", i, err))
-		} else {
+		} else if coversFinal {
 			res.TimestampsIndependent++
+		} else {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("anchor %d: verified timestamp covers an earlier prefix, not the published head; not counted as independent", i))
 		}
 	}
 	return true

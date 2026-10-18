@@ -64,7 +64,7 @@ func buildLog(t *testing.T, n int) (entries []EntryView, head hash.TreeHead, pub
 	}
 	// The head names the log it commits to via the tenant-derived id, exactly
 	// as the producer stamps it, so fixtures verify under the log-id rule.
-	head = hash.TreeHead{LogID: hash.DeriveLogID(tenant), Index: uint64(n), RootHash: hash.MerkleRoot(leaves), TreeSize: uint64(n), SignedAt: base.Add(time.Hour)}
+	head = hash.TreeHead{Algorithm: "ed25519", LogID: hash.DeriveLogID(tenant), Index: uint64(n), RootHash: hash.MerkleRoot(leaves), TreeSize: uint64(n), SignedAt: base.Add(time.Hour)}
 	head.Signature = ed25519.Sign(testPriv(), HeadPayload(head))
 	return entries, head, testPub(), leaves
 }
@@ -163,8 +163,6 @@ func TestVerifyReceiptRequiresItsEvidence(t *testing.T) {
 		IntentID:   entry.IntentID,
 		TenantID:   entry.TenantID,
 		GrantID:    entry.GrantID,
-		EffectID:   "effect-9",
-		Effect:     "payments.transfer",
 		RecordHash: entry.RecordHash,
 		IssuedAt:   entry.OccurredAt,
 		Entry:      &entry,

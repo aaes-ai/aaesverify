@@ -192,7 +192,7 @@ func TestResultHelpersAndEmbeddedKey(t *testing.T) {
 	}
 }
 
-func TestChainAndReceiptRemainingRefusals(t *testing.T) {
+func TestChainAndReceiptRefusals(t *testing.T) {
 	entries, head, pub, leaves := buildLog(t, 4)
 	missingTenant := append([]EntryView(nil), entries...)
 	missingTenant[0].TenantID = ""
@@ -376,6 +376,10 @@ func TestVerifyParsedAnchorWitnessAndTimestampGaps(t *testing.T) {
 	res, err = VerifyExportReader(strings.NewReader(doc), pub)
 	if err != nil || res.OK || !strings.Contains(strings.Join(res.Errors, " "), "does not cover this head") {
 		t.Fatalf("timestamp digest = %+v %v", res, err)
+	}
+	// An anchor failed by its timestamp must not be tallied as verified.
+	if res.AnchorsVerified != 0 {
+		t.Fatalf("timestamp-failed anchor counted as verified: %d", res.AnchorsVerified)
 	}
 
 	_, cert, _, key := testTSA(t)
@@ -600,88 +604,61 @@ func TestTimestampCMSHelpers(t *testing.T) {
 		t.Fatalf("Ed25519 alg = %v %v", algo, err)
 	}
 
-	if err := tsCheckMessageDigest([]byte{0x01}, []byte("x")); err == nil {
-		t.Fatal("garbage signedAttrs accepted")
-	}
-	other := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidSHA256Verifier, Values: []asn1.RawValue{{FullBytes: mustASN1(t, []byte("x"))}}})
-	if err := tsCheckMessageDigest(other, []byte("x")); err == nil {
-		t.Fatal("missing message-digest accepted")
-	}
-	emptyVal := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidMessageDigestV})
-	if err := tsCheckMessageDigest(emptyVal, []byte("x")); err == nil {
-		t.Fatal("empty message-digest accepted")
-	}
-	notOctet := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidMessageDigestV, Values: []asn1.RawValue{{FullBytes: mustASN1(t, 1)}}})
-	if err := tsCheckMessageDigest(notOctet, []byte("x")); err == nil {
-		t.Fatal("non-octet message-digest accepted")
-	}
-	sum := sha256.Sum256([]byte("other"))
-	wrong := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidMessageDigestV, Values: []asn1.RawValue{{FullBytes: mustASN1(t, sum[:])}}})
-	if err := tsCheckMessageDigest(wrong, []byte("x")); err == nil {
-		t.Fatal("mismatched message-digest accepted")
-	}
-	goodSum := sha256.Sum256([]byte("x"))
-	good := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidMessageDigestV, Values: []asn1.RawValue{{FullBytes: mustASN1(t, goodSum[:])}}})
-	if err := tsCheckMessageDigest(good, []byte("x")); err != nil {
-		t.Fatalf("matching message-digest refused: %v", err)
-	}
-
 	eContent := []byte("verifier-tst")
-	md := sha256.Sum256(eContent)
-	mdAttr := mustASN1(t, struct {
-		Type   asn1.ObjectIdentifier
-		Values []asn1.RawValue `asn1:"set"`
-	}{Type: oidMessageDigestV, Values: []asn1.RawValue{{FullBytes: mustASN1(t, md[:])}}})
-	setToSign := mustASN1(t, asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: mdAttr})
-	hashed := sha256.Sum256(setToSign)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hashed[:])
-	if err != nil {
-		t.Fatal(err)
-	}
 	sid := mustASN1(t, struct {
 		Issuer       asn1.RawValue
 		SerialNumber *big.Int
 	}{Issuer: asn1.RawValue{FullBytes: cert.RawIssuer}, SerialNumber: cert.SerialNumber})
-	signedSI := mustASN1(t, tsSignerInfo{
-		Version: 1, SID: asn1.RawValue{FullBytes: sid},
-		DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
-		SignedAttrs:        asn1.RawValue{Class: 2, Tag: 0, IsCompound: true, Bytes: mdAttr},
-		SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
-		Signature:          sig,
-	})
-	gotCert, err := tsVerifyCMS(tsSignedData{
-		EncapContentInfo: tsEncap{EContent: eContent},
-		SignerInfos:      asn1.RawValue{Bytes: signedSI},
-	}, [][]byte{der})
-	if err != nil || gotCert.SerialNumber.Cmp(cert.SerialNumber) != 0 {
-		t.Fatalf("signedAttrs CMS = %v %v", gotCert, err)
+	verifyWith := func(attrs, signOver []byte, flip bool) error {
+		hashed := sha256.Sum256(signOver)
+		sig, err := ecdsa.SignASN1(rand.Reader, key, hashed[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if flip {
+			sig[len(sig)-1] ^= 0xff
+		}
+		si := tsSignerInfo{
+			Version: 1, SID: asn1.RawValue{FullBytes: sid},
+			DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
+			SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
+			Signature:          sig,
+		}
+		if attrs != nil {
+			si.SignedAttrs = asn1.RawValue{Class: 2, Tag: 0, IsCompound: true, Bytes: attrs}
+		}
+		gotCert, err := tsVerifyCMS(tsSignedData{EncapContentInfo: tsEncap{EContent: eContent}, SignerInfos: asn1.RawValue{Bytes: mustASN1(t, si)}}, [][]byte{der})
+		if err == nil && gotCert.SerialNumber.Cmp(cert.SerialNumber) != 0 {
+			t.Fatalf("tsVerifyCMS returned %v, not the signer", gotCert.SerialNumber)
+		}
+		return err
 	}
-	flipped := append([]byte(nil), sig...)
-	flipped[0] ^= 0xff
-	badSI := mustASN1(t, tsSignerInfo{
-		Version: 1, SID: asn1.RawValue{FullBytes: sid},
-		DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
-		SignedAttrs:        asn1.RawValue{Class: 2, Tag: 0, IsCompound: true, Bytes: mdAttr},
-		SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
-		Signature:          flipped,
-	})
-	if _, err := tsVerifyCMS(tsSignedData{EncapContentInfo: tsEncap{EContent: eContent}, SignerInfos: asn1.RawValue{Bytes: badSI}}, [][]byte{der}); err == nil {
+	setOf := func(attrs []byte) []byte {
+		return mustASN1(t, asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: attrs})
+	}
+	good, err := hash.TimestampSignedAttrs(eContent, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWith(good, setOf(good), false); err != nil {
+		t.Fatalf("conforming signedAttrs CMS = %v", err)
+	}
+	if err := verifyWith(good, setOf(good), true); err == nil {
 		t.Fatal("flipped CMS signature verified")
+	}
+	if err := verifyWith(nil, eContent, false); !errors.Is(err, hash.ErrTimestampAttrsBinding) {
+		t.Fatalf("SignerInfo without signedAttrs (signature over the TSTInfo) = %v", err)
+	}
+	if err := verifyWith([]byte{0x01}, setOf([]byte{0x01}), false); !errors.Is(err, hash.ErrTimestampAttrsMalformed) {
+		t.Fatalf("garbage signedAttrs = %v", err)
+	}
+	_, otherCert, _, _ := testTSA(t)
+	otherAttrs, err := hash.TimestampSignedAttrs(eContent, otherCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWith(otherAttrs, setOf(otherAttrs), false); !errors.Is(err, hash.ErrTimestampAttrsBinding) {
+		t.Fatalf("ESSCertIDv2 naming another certificate = %v", err)
 	}
 	sha1SI := mustASN1(t, tsSignerInfo{
 		Version: 1, SID: asn1.RawValue{FullBytes: sid},
@@ -692,27 +669,14 @@ func TestTimestampCMSHelpers(t *testing.T) {
 	if _, err := tsVerifyCMS(tsSignedData{EncapContentInfo: tsEncap{EContent: eContent}, SignerInfos: asn1.RawValue{Bytes: sha1SI}}, [][]byte{der}); err == nil {
 		t.Fatal("SHA-1 SignerInfo verified")
 	}
-	missingMD := mustASN1(t, tsSignerInfo{
-		Version: 1, SID: asn1.RawValue{FullBytes: sid},
-		DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
-		SignedAttrs:        asn1.RawValue{Class: 2, Tag: 0, IsCompound: true, Bytes: other},
-		SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
-		Signature:          []byte("x"),
-	})
-	if _, err := tsVerifyCMS(tsSignedData{EncapContentInfo: tsEncap{EContent: eContent}, SignerInfos: asn1.RawValue{Bytes: missingMD}}, [][]byte{der}); err == nil {
-		t.Fatal("signedAttrs without message-digest verified")
-	}
 
 	extra, _, _, _ := testTSA(t)
 	tstDER := tsStructureTSTInfo(t, oidSHA256Verifier, digest, at)
-	hashedLeaf := sha256.Sum256(tstDER)
-	leafSig, err := ecdsa.SignASN1(rand.Reader, key, hashedLeaf[:])
-	if err != nil {
-		t.Fatal(err)
-	}
+	leafAttrs, leafSig := tsTestSignedAttrs(t, tstDER, cert, key)
 	leafSI := mustASN1(t, tsSignerInfo{
 		Version: 1, SID: asn1.RawValue{FullBytes: sid},
 		DigestAlgorithm:    tsAlgID{Algorithm: oidSHA256Verifier},
+		SignedAttrs:        leafAttrs,
 		SignatureAlgorithm: tsAlgID{Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}},
 		Signature:          leafSig,
 	})
@@ -780,12 +744,7 @@ func tsStructureResponseStatus(t *testing.T, status int) []byte {
 }
 
 func TestMarshalResultFallsBackWhenEncoderFails(t *testing.T) {
-	orig := resultMarshalIndent
-	t.Cleanup(func() { resultMarshalIndent = orig })
-	resultMarshalIndent = func(any, string, string) ([]byte, error) {
-		return nil, errors.New("marshal refused")
-	}
-	raw, err := MarshalResult(&Result{OK: true})
+	raw, err := MarshalResult(&Result{OK: true, ExportedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)})
 	if err == nil {
 		t.Fatal("expected marshal fallback error")
 	}

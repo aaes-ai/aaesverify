@@ -7,10 +7,11 @@ import (
 	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
-// ReceiptView is a receipt plus the log evidence that makes it checkable
-// offline. Entry is required: the verifier recomputes the leaf from the
-// receipt's own entry rather than trusting the leaf string, and binds intent,
-// grant and record identity to that leaf.
+// ReceiptView is a decision-only receipt plus the log evidence that makes it
+// checkable offline. Entry is required: the verifier recomputes the leaf from
+// the receipt's own entry rather than trusting the leaf string, and binds intent,
+// grant and record identity to that leaf. Effect and EffectID must be empty
+// because no signature covers them.
 type ReceiptView struct {
 	ReceiptID  string    `json:"receipt_id"`
 	IntentID   string    `json:"intent_id"`
@@ -27,6 +28,13 @@ type ReceiptView struct {
 	Head  *hash.TreeHead       `json:"head,omitempty"`
 }
 
+func checkDecisionOnlyReceipt(r ReceiptView) error {
+	if r.Effect != "" || r.EffectID != "" {
+		return fmt.Errorf("%w: outcome fields effect and effect_id are not covered by the signature and must be empty", ErrReceipt)
+	}
+	return nil
+}
+
 // VerifyReceipt verifies one receipt against a signed tree head and an
 // inclusion proof, using only the bytes in the receipt.
 //
@@ -35,8 +43,12 @@ type ReceiptView struct {
 // or after the receipt was issued, that an EntryView is attached so intent,
 // grant and record identity can be bound to the leaf, that the leaf was
 // recomputed from the entry rather than taken on faith, and that the entry
-// agrees with the receipt's identifiers.
+// agrees with the receipt's identifiers. Outcome fields are refused: the
+// decision leaf and head signature do not authenticate them.
 func VerifyReceipt(r ReceiptView, pubKey []byte) error {
+	if err := checkDecisionOnlyReceipt(r); err != nil {
+		return err
+	}
 	if r.ReceiptID == "" || r.TenantID == "" {
 		return fmt.Errorf("%w: receipt_id and tenant_id are required", ErrReceipt)
 	}

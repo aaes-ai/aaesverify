@@ -113,12 +113,19 @@ func NewMoney(minor int64, currency string) (Money, error) {
 // USDM is a convenience constructor for amounts stated in whole or fractional
 // MAJOR USD units — test literals and configuration written the way a human
 // writes dollars. The value is converted to integer minor units immediately
-// (rounded half away from zero); nothing is ever STORED as a float.
+// (rounded half away from zero); nothing is ever STORED as a float. A finite
+// value beyond the int64 minor-unit range saturates with its sign. NaN and
+// ±Inf have no amount, so they become MinInt64: a negative value every budget,
+// ceiling and amount validator refuses, never a permissive maximum.
 func USDM(major float64) Money {
-	if math.IsNaN(major) || math.IsInf(major, 0) {
+	minor := math.Round(major * 100)
+	switch {
+	case math.IsNaN(major) || math.IsInf(major, 0) || minor < math.MinInt64:
+		return Money{Minor: math.MinInt64, Currency: DefaultCurrency}
+	case minor >= math.MaxInt64:
 		return Money{Minor: math.MaxInt64, Currency: DefaultCurrency}
 	}
-	return Money{Minor: int64(math.Round(major * 100)), Currency: DefaultCurrency}
+	return Money{Minor: int64(minor), Currency: DefaultCurrency}
 }
 
 // ParseMajor parses a human-typed major-unit decimal into Money for currency.

@@ -51,6 +51,7 @@ func buildGappedLog(t *testing.T, sequences []uint64, tomb *TombstoneView) ([]En
 		leaves = append(leaves, leaf)
 	}
 	head := hash.TreeHead{
+		Algorithm: "ed25519",
 		// The tenant-derived log id, as the producer stamps it; without it the
 		// fixture head is legacy material and every export below would fail.
 		LogID:    hash.DeriveLogID("tenant-a"),

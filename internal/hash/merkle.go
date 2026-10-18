@@ -7,6 +7,9 @@ import (
 
 // TreeHead is a signed commitment to the log state at a point in time.
 type TreeHead struct {
+	// Algorithm is signed with the head. Empty is reserved for historical
+	// Ed25519 heads; new producers always stamp the signing primitive.
+	Algorithm string `json:"algorithm,omitempty"`
 	// LogID identifies the log this head belongs to, and it is INSIDE the
 	// signed payload (the canonical bytes HeadPayload covers). Without it the
 	// payload is only {index, root_hash, tree_size, signed_at}; for an empty
