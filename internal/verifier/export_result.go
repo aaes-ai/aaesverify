@@ -61,8 +61,63 @@ type Result struct {
 	ResultSchema string `json:"result_schema,omitempty"`
 	// Verdict is the same headline the text renderer prints. PASS requires an
 	// independent witness or an independent timestamp. A witness-less success
-	// is CONSISTENT.
+	// is CONSISTENT. For a v4 export, PASS/CONSISTENT is issued only in
+	// expected-final-head mode; the weaker freshness modes carry their scoped
+	// headlines (VerdictContinuityV4, VerdictFloorV4, VerdictUnpinnedV4) so a
+	// continuity or floor result can never read as current v4 evidence.
 	Verdict string `json:"verdict,omitempty"`
+
+	// The v4 scoped results below appear only for aaes.export/v4 verification
+	// (design sections 4.8 and 6.4); a legacy result does not carry them.
+	// CryptographicConsistency is a pointer so the member is absent rather
+	// than false in a legacy result.
+	CryptographicConsistency *bool `json:"cryptographic_consistency,omitempty"`
+	// ReceiptIdentityAndParent and ApprovalSourceHistory are the scoped
+	// full-export record checks: "verified", "failed" or "not_checked" when
+	// the cryptographic phase did not pass.
+	ReceiptIdentityAndParent string `json:"receipt_identity_and_parent,omitempty"`
+	ApprovalSourceHistory    string `json:"approval_source_history,omitempty"`
+	// ReceiptExecutionValidity is ALWAYS "not_checked" in a v4 offline result:
+	// the format does not reconstruct receipt execution/lifecycle histories,
+	// and this disclosure is required, not optional (design section 4.8).
+	ReceiptExecutionValidity string `json:"receipt_execution_validity,omitempty"`
+	// Freshness labels (design section 6.4): "verified", "failed",
+	// "satisfied" (tree_size_floor only) or "not_checked".
+	ExpectedFinalHead     string `json:"expected_final_head,omitempty"`
+	ContinuityFromCutover string `json:"continuity_from_cutover,omitempty"`
+	TreeSizeFloor         string `json:"tree_size_floor,omitempty"`
+	LatestState           string `json:"latest_state,omitempty"`
+	AntiRollback          string `json:"anti_rollback,omitempty"`
+
+	// Standalone receipt-bundle results (design section 4.9): both inclusion
+	// proofs verified against the same pinned head and the parent binding
+	// checked. A bundle never establishes tenant-wide receipt-ID uniqueness or
+	// execution/lifecycle validity.
+	ReceiptLeafAndParentVerified *bool  `json:"receipt_leaf_and_parent_verified,omitempty"`
+	ReceiptParentBinding         string `json:"receipt_parent_binding,omitempty"`
+	// LeafInclusionVerified is the standalone approval/summary
+	// inclusion-only result; their scoped history/ancestry results stay
+	// "not_checked" there because a standalone leaf cannot establish them.
+	LeafInclusionVerified *bool `json:"leaf_inclusion_verified,omitempty"`
+	// Summary results (design section 5): input integrity (not freshness)
+	// and the per-input freshness labels. SummaryProfile stays "not_checked"
+	// in the base verifier: the finding/metric evaluator is profile work,
+	// not export-schema verification.
+	SummaryInputsVerified     *bool                  `json:"summary_inputs_verified,omitempty"`
+	SummaryInputs             []SummaryInputResultV4 `json:"summary_inputs,omitempty"`
+	SummaryAncestry           string                 `json:"summary_ancestry,omitempty"`
+	SummaryProfile            string                 `json:"summary_profile,omitempty"`
+	SummaryProducerAuthorship string                 `json:"summary_producer_authorship,omitempty"`
+}
+
+// SummaryInputResultV4 is the per-input outcome of section 5.3 summary input
+// verification: integrity ("verified"/"failed") and freshness ("verified" or
+// "not_checked"). Freshness is evaluated independently for every input; the
+// summary log's own expected-final pin never upgrades an input.
+type SummaryInputResultV4 struct {
+	InputID     string `json:"input_id"`
+	Integrity   string `json:"integrity"`
+	LatestState string `json:"latest_state"`
 }
 
 // ResultSchemaV2 is the verifier result document that distinguishes a

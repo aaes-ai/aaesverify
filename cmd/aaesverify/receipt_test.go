@@ -209,7 +209,7 @@ func TestRunReceiptReportsValidAnchor(t *testing.T) {
 		}
 	})
 	out, code := captureRun(t, []string{"--receipt", receiptPath, "--pubkey", fixturePubKeyPath(t)})
-	if code != 0 || !strings.Contains(out, "present, head signature OK, witnesses not checked") {
+	if code != 0 || !strings.Contains(out, "present, head signature OK; witnesses and timestamps not checked") {
 		t.Fatalf("valid anchor human output exited %d:\n%s", code, out)
 	}
 	out, code = captureRun(t, []string{"--receipt", receiptPath, "--pubkey", fixturePubKeyPath(t), "--json"})
@@ -220,7 +220,7 @@ func TestRunReceiptReportsValidAnchor(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res["anchor_present"] != true || res["anchor_head_signature_ok"] != true {
+	if res["anchor_present"] != true || res["anchor_head_signature_ok"] != true || res["anchor_matches_receipt_head"] != true {
 		t.Fatalf("valid anchor JSON fields = %+v", res)
 	}
 }
@@ -411,4 +411,29 @@ func writeReceiptFixture(t *testing.T, receipt verifier.TrustReceipt) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestReceiptRendererSeparatesUnboundAnchor(t *testing.T) {
+	res := &trustReceiptResult{OK: true, AnchorPresent: true, AnchorHeadSignatureOK: true, Verdict: "CONSISTENT"}
+	out := renderTrustReceipt(res)
+	if !strings.Contains(out, "different tree state") || !strings.Contains(out, "append-only consistency under this anchor not verified") || strings.Contains(out, "same tree state as the receipt proof") {
+		t.Fatalf("unbound anchor output overstates receipt evidence: %s", out)
+	}
+}
+
+func TestReceiptCannotBypassOtherVerificationModes(t *testing.T) {
+	for _, flag := range []string{"--evaluation", "--records", "--export", "--tsa-roots", "--witness-trust"} {
+		t.Run(flag, func(t *testing.T) {
+			out, code := captureRun(t, []string{"--receipt", "receipt.json", "--pubkey", "key.pub", flag, "other"})
+			if code != 2 || strings.Contains(out, "CONSISTENT") {
+				t.Fatalf("receipt accepted incompatible mode %s: %d %s", flag, code, out)
+			}
+		})
+	}
+	for _, flag := range []string{"--require-independent", "--allow-pre-anchor"} {
+		out, code := captureRun(t, []string{"--receipt", "receipt.json", "--pubkey", "key.pub", flag})
+		if code != 2 || !strings.Contains(out, "only to --export") {
+			t.Fatalf("receipt accepted export trust flag %s: %d %s", flag, code, out)
+		}
+	}
 }

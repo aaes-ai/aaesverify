@@ -1,7 +1,7 @@
-# Candidate evaluation disclosure profile
+# Evaluation disclosure profile
 
-This local candidate adds `aaesverify --evaluation DIR --json`. It does not change
-the export verifier's v2/v3 rules or claim a published release. The package uses
+v0.3.0 adds `aaesverify --evaluation DIR --json`. It does not change the
+export verifier's v2/v3 rules. The package uses
 only the public verifier module and Go's standard library.
 
 An evaluation directory contains the original `evaluation.json` and
@@ -24,7 +24,7 @@ label, in the form `aaes.local-provider/N` with a positive integer version and n
 leading zero. Missing, malformed or different labels are refused even when their
 signatures and hashes are valid. Successful output reports `provider` and
 `provider_metadata_consistent: true`. Earlier packages retain their original
-verifiers; this candidate refuses their mismatched version labels.
+verifiers; v0.3.0 refuses their mismatched version labels.
 
 The fixed profile discloses the case plan, execution plan, results, synthetic
 provider calls, configuration, dependency lock, limits, HTTP transcript and
@@ -32,7 +32,7 @@ evidence files. It omits source trees, source inventories, producer executables,
 private build records and private reports. The original manifest retains their
 names and hashes; its bytes and signature are not redacted or replaced.
 
-The candidate checks the v3 export's authenticated head algorithm, signature,
+The verifier checks the v3 export's authenticated head algorithm, signature,
 chain, Merkle root and supported witness/timestamp evidence. A successful local
 history with no independently pinned witness or TSA reports CONSISTENT. Requiring
 independent attestation refuses these histories.

@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/aaes-ai/aaesverify/internal/hash"
 )
@@ -92,83 +89,6 @@ func decodeTrustReceipt(raw []byte) (TrustReceipt, error) {
 	return r, nil
 }
 
-func checkDuplicateJSONKeys(raw []byte) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	return checkJSONValue(dec)
-}
-
-func checkJSONValue(dec *json.Decoder) error {
-	token, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		seen := make(map[string]struct{})
-		for dec.More() {
-			token, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := token.(string)
-			if !ok {
-				return fmt.Errorf("object key has type %T", token)
-			}
-			folded := foldJSONKey(key)
-			if _, exists := seen[folded]; exists {
-				return fmt.Errorf("duplicate object key %q", key)
-			}
-			seen[folded] = struct{}{}
-			if err := checkJSONValue(dec); err != nil {
-				return err
-			}
-		}
-		_, err = dec.Token()
-		return err
-	case '[':
-		for dec.More() {
-			if err := checkJSONValue(dec); err != nil {
-				return err
-			}
-		}
-		_, err = dec.Token()
-		return err
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delim)
-	}
-}
-
-func foldJSONKey(key string) string {
-	var folded strings.Builder
-	folded.Grow(len(key))
-	for _, r := range key {
-		if r < utf8.RuneSelf {
-			if 'a' <= r && r <= 'z' {
-				r -= 'a' - 'A'
-			}
-		} else {
-			r = foldJSONKeyRune(r)
-		}
-		folded.WriteRune(r)
-	}
-	return folded.String()
-}
-
-func foldJSONKeyRune(r rune) rune {
-	for {
-		next := unicode.SimpleFold(r)
-		if next <= r {
-			return next
-		}
-		r = next
-	}
-}
-
 func verifyTrustReceipt(r TrustReceipt, pubKey []byte) error {
 	if r.Schema != TrustReceiptSchema {
 		return fmt.Errorf("%w: schema %q, want %q", ErrReceipt, r.Schema, TrustReceiptSchema)
@@ -221,27 +141,44 @@ func checkTrustReceiptEvidence(r TrustReceipt, pubKey []byte) error {
 	return checkTrustReceiptAnchor(r, pubKey)
 }
 
+// checkTrustReceiptAnchor authenticates the carried anchor head, not witnesses,
+// timestamps or append-only consistency with a different receipt head. The
+// producer may carry an earlier prefix; only an identical tree state binds the
+// receipt proof to this anchor as well as to the receipt's own signed head.
 func checkTrustReceiptAnchor(r TrustReceipt, pubKey []byte) error {
 	if r.Anchor == nil {
 		return nil
 	}
-	if err := VerifyTreeHead(r.Anchor.Head, pubKey, r.Anchor.Head.Algorithm); err != nil {
+	if err := VerifyTreeHead(r.Anchor.Head, pubKey, r.Anchor.Algorithm); err != nil {
 		return fmt.Errorf("anchor head: %w", err)
 	}
-	if r.Anchor.Head.TreeSize < r.Proof.TreeSize {
-		return fmt.Errorf("%w: anchor head covers %d leaves, proof covers %d", ErrReceipt, r.Anchor.Head.TreeSize, r.Proof.TreeSize)
+	if err := checkHeadLogID(r.Anchor.Head, hash.DeriveLogID(r.Entry.TenantID)); err != nil {
+		return fmt.Errorf("anchor head: %w", err)
+	}
+	if r.Anchor.Head.TreeSize <= r.Proof.Index {
+		return fmt.Errorf("%w: anchor head covers %d leaves, receipt index is %d", ErrReceipt, r.Anchor.Head.TreeSize, r.Proof.Index)
+	}
+	if r.Anchor.Head.TreeSize == r.Head.TreeSize && !headCoversFinal(r.Anchor.Head, *r.Head) {
+		return fmt.Errorf("%w: anchor head conflicts with the receipt head at the same tree size", ErrReceipt)
 	}
 	return nil
 }
 
+// TrustReceiptAnchorMatchesHead reports whether the already verified receipt's
+// optional anchor commits to the same tree state as its inclusion proof. It
+// does not verify a receipt, witness, timestamp or append-only consistency.
+func TrustReceiptAnchorMatchesHead(r TrustReceipt) bool {
+	return r.Anchor != nil && r.Head != nil && headCoversFinal(r.Anchor.Head, *r.Head)
+}
+
 func checkTrustReceiptProof(r TrustReceipt) error {
-	if r.Proof.TreeSize > r.Head.TreeSize {
+	if r.Proof.TreeSize != r.Head.TreeSize {
 		return fmt.Errorf("%w: proof covers %d leaves, head covers %d", ErrReceipt, r.Proof.TreeSize, r.Head.TreeSize)
 	}
 	if r.Proof.RootHash != r.Head.RootHash {
 		return fmt.Errorf("%w: proof root %s, head root %s", ErrReceipt, r.Proof.RootHash, r.Head.RootHash)
 	}
-	if !hash.VerifyInclusion(r.Leaf, *r.Proof) {
+	if !hash.VerifyInclusionAgainst(r.Leaf, *r.Proof, *r.Head) {
 		return ErrInclusion
 	}
 	return nil

@@ -1,11 +1,14 @@
 package verifier
 
 import (
+	"crypto/ed25519"
 	"crypto/x509"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/aaes-ai/aaesverify/internal/hash"
 )
 
 // VerifyOptions selects checks beyond internal consistency. Passing
@@ -25,6 +28,84 @@ type VerifyOptions struct {
 	TSARoots           *x509.CertPool
 	RequireIndependent bool
 	AllowPreAnchor     bool
+	// Keyring pins the authorised ledger keys of one logical log, key_id to
+	// public key (design section 4.7). Every v4 head — the final head via the
+	// header's signing_key_id, every anchor via its required key_id — resolves
+	// through it; an unknown key_id is an error, never a silent skip. Without
+	// a keyring a v4 export verifies only as unpinned internal consistency
+	// against the embedded key.
+	Keyring map[string]ed25519.PublicKey
+	// ExpectedSchema, when set, is the schema the caller expects; a file
+	// declaring anything else fails before verification, so a relabelled
+	// export cannot pass under a parser the caller did not choose.
+	ExpectedSchema string
+	// ExpectedTenantID and ExpectedLogID pin the expected logical-log
+	// identity for v4 verification (design section 6.4).
+	ExpectedTenantID string
+	ExpectedLogID    string
+	// Exactly one freshness mode may be set (design section 6.4).
+	// ExpectedFinal pins the exact expected final head — the only
+	// current-evidence mode. Cutover pins a previously accepted cutover head
+	// that must appear as a verified anchor. MinTreeSize is a minimum
+	// tree-size floor. None set is unpinned internal-consistency
+	// verification. Setting any of them on a v2/v3 export is a downgrade
+	// refusal.
+	ExpectedFinal *HeadPin
+	Cutover       *HeadPin
+	MinTreeSize   uint64
+	// SummaryReferences supplies the referenced full export for each
+	// non-local summary input (design section 5.3), matched by the input_id
+	// the summary gives it. A non-local input without its reference fails.
+	SummaryReferences []SummaryReferenceV4
+	// TrustedSummaryProducerKeys pins summary producer keys by key_id
+	// (design section 5.4). Without a pin, producer authorship is left
+	// unverified; an embedded public_key is internal consistency only.
+	TrustedSummaryProducerKeys map[string]ed25519.PublicKey
+}
+
+// SummaryReferenceV4 is the caller-supplied evidence for one non-local
+// summary input (design section 5.3): the referenced full export, the
+// caller-pinned keyring of that input's own logical log, and optionally the
+// expected-final pin that makes the input CURRENT. A cutover or floor pin is
+// accepted but only ever yields latest_state "not_checked" for the input.
+type SummaryReferenceV4 struct {
+	InputID       string
+	Export        []byte
+	Keyring       map[string]ed25519.PublicKey
+	ExpectedFinal *HeadPin
+	Cutover       *HeadPin
+	MinTreeSize   uint64
+}
+
+// HeadPin pins one expected tree state by log id, decision index, root and
+// tree size (design section 6.4). Tree-state comparison is by logical log
+// identity and tree size, never by head.index alone: the decision index can
+// remain unchanged while typed leaves grow the tree.
+type HeadPin struct {
+	LogID    string `json:"log_id"`
+	Index    uint64 `json:"index"`
+	RootHash string `json:"root_hash"`
+	TreeSize uint64 `json:"tree_size"`
+}
+
+// matches reports whether h is exactly the pinned state.
+func (p HeadPin) matches(h hash.TreeHead) bool {
+	return p.LogID == h.LogID && p.Index == h.Index && p.RootHash == h.RootHash && p.TreeSize == h.TreeSize
+}
+
+// freshnessModesSetV4 counts the requested section 6.4 freshness modes.
+func freshnessModesSetV4(opts VerifyOptions) int {
+	n := 0
+	if opts.ExpectedFinal != nil {
+		n++
+	}
+	if opts.Cutover != nil {
+		n++
+	}
+	if opts.MinTreeSize != 0 {
+		n++
+	}
+	return n
 }
 
 // VerifyExportReaderResult verifies an export from r. Load failures become
@@ -33,6 +114,15 @@ func VerifyExportReaderResult(r io.Reader, pubKey []byte, opts VerifyOptions) *R
 	exp, err := LoadExportReader(r)
 	if err != nil {
 		return &Result{OK: false, ResultSchema: ResultSchemaV2, Verdict: "FAIL", Errors: []string{err.Error()}}
+	}
+	return VerifyParsedExport(exp, pubKey, opts)
+}
+
+// VerifyParsedExport verifies an export that has already been parsed.
+// Callers that just loaded the file use this instead of reading it again.
+func VerifyParsedExport(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
+	if exp == nil {
+		return &Result{OK: false, ResultSchema: ResultSchemaV2, Verdict: "FAIL", Errors: []string{"verifier: no export"}}
 	}
 	return verifyParsed(exp, pubKey, opts)
 }

@@ -10,6 +10,13 @@ type TreeHead struct {
 	// Algorithm is signed with the head. Empty is reserved for historical
 	// Ed25519 heads; new producers always stamp the signing primitive.
 	Algorithm string `json:"algorithm,omitempty"`
+	// Schema names the export schema the head signs ("aaes.export/v4" and
+	// later). It is INSIDE the signed payload, so a v4 signature cannot be
+	// reused under a legacy schema without breaking verification. omitempty
+	// keeps heads signed before the field existed byte-identical: legacy
+	// heads carry no schema and legacy payload rules stay the historical
+	// behaviour.
+	Schema string `json:"schema,omitempty"`
 	// LogID identifies the log this head belongs to, and it is INSIDE the
 	// signed payload (the canonical bytes HeadPayload covers). Without it the
 	// payload is only {index, root_hash, tree_size, signed_at}; for an empty

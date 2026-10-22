@@ -1,17 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/aaes-ai/aaesverify/internal/verifier"
+	"github.com/aaes-ai/aaesverify/internal/verifytext"
 )
 
 const usageHelp = `usage: aaesverify usage [--usage-key <hex>] [--export <file>] [--json] <report>
@@ -46,7 +45,7 @@ func runUsage(args []string) int {
 		fmt.Fprint(os.Stderr, usageHelp)
 		return 2
 	}
-	raw, err := readUsageReport(fs.Arg(0))
+	raw, err := verifytext.ReadUsageReport(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aaesverify: read usage report: %v\n", err)
 		return 2
@@ -66,21 +65,19 @@ func runUsage(args []string) int {
 			fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
 			return 2
 		}
-		export := verifier.VerifyExportReaderResult(bytes.NewReader(normalized), nil, verifier.VerifyOptions{AllowPreAnchor: true})
-		ledger, err := hex.DecodeString(export.PublicKeyHex)
-		if err != nil || len(ledger) == 0 {
-			fmt.Fprintln(os.Stderr, "aaesverify: the export names no readable ledger key")
+		ledger, err := verifytext.LedgerKeyFromVerifiedExport(normalized)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "aaesverify: %v\n", err)
+			if errors.Is(err, verifytext.ErrExportUnverified) {
+				return 1
+			}
 			return 2
-		}
-		if !export.OK {
-			fmt.Fprintf(os.Stderr, "aaesverify: the export does not verify, so its ledger key cannot be trusted: %v\n", export.Errors)
-			return 1
 		}
 		opts.LedgerPublicKey = ledger
 	}
 	res := verifier.VerifyUsageReport(raw, opts)
 	if !*jsonOnly {
-		fmt.Println(renderUsage(fs.Arg(0), res))
+		fmt.Println(verifytext.RenderUsage(fs.Arg(0), res))
 		fmt.Println("--- json ---")
 	}
 	// UsageResult holds only strings, booleans and a string slice, so it
@@ -93,54 +90,6 @@ func runUsage(args []string) int {
 	return 0
 }
 
-// maxUsageReportBytes bounds the report read so a crafted file cannot exhaust
-// an examiner's memory; real reports are a few kilobytes per tenant.
-const maxUsageReportBytes = 16 << 20
+const maxUsageReportBytes = verifytext.MaxUsageReportBytes
 
-func readUsageReport(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(io.LimitReader(f, maxUsageReportBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > maxUsageReportBytes {
-		return nil, fmt.Errorf("report exceeds %d bytes", maxUsageReportBytes)
-	}
-	return raw, nil
-}
-
-func renderUsage(path string, res verifier.UsageResult) string {
-	var b strings.Builder
-	line := func(k, v string) { fmt.Fprintf(&b, "%-22s %s\n", k+":", v) }
-	r := res.Report
-	line("usage report", path)
-	line("report id", r.ReportID)
-	line("deployment", fmt.Sprintf("%s (%s), license %s", r.DeploymentID, r.Environment, r.LicenseID))
-	line("period", fmt.Sprintf("%s..%s closed=%v", r.Period.Start.Format("2006-01-02"), r.Period.End.Format("2006-01-02"), r.Period.Closed))
-	line("governed decisions", fmt.Sprintf("%d (records: %d permit, %d refusal, %d deferral)",
-		r.Totals.GovernedDecisions, r.Totals.PermitRecords, r.Totals.RefusalRecords, r.Totals.DeferralRecords))
-	line("tenants", fmt.Sprintf("%d", len(r.Tenants)))
-	switch res.KeySource {
-	case verifier.UsageKeySupplied:
-		line("usage key", res.RootKeyFingerprint+" (chain starts at the supplied key)")
-	default:
-		line("usage key", res.RootKeyFingerprint+" (embedded key: internal consistency only)")
-	}
-	for i, e := range res.Errors {
-		if i == 0 {
-			line("errors", e)
-		} else {
-			line("", e)
-		}
-	}
-	result := "OK"
-	if !res.OK {
-		result = "FAIL"
-	}
-	line("result", result)
-	return strings.TrimRight(b.String(), "\n")
-}
+func readUsageReport(path string) ([]byte, error) { return verifytext.ReadUsageReport(path) }

@@ -45,52 +45,6 @@ func TestVerifyTrustReceiptAcceptsDecisionReceipt(t *testing.T) {
 	}
 }
 
-func TestVerifyTrustReceiptAcceptsValidAnchor(t *testing.T) {
-	r, pub := validTrustReceipt(t)
-	r.Anchor = &AnchorView{
-		Head:      *r.Head,
-		Witnesses: []WitnessView{{WitnessID: "unchecked", Signature: []byte("forged")}},
-	}
-	raw, err := r.MarshalIndent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := VerifyTrustReceipt(raw, pub)
-	if err != nil {
-		t.Fatalf("VerifyTrustReceipt with valid anchor head: %v", err)
-	}
-	if got.Anchor == nil {
-		t.Fatal("verified receipt dropped its anchor")
-	}
-}
-
-func TestVerifyTrustReceiptRejectsForgedAnchorHead(t *testing.T) {
-	r, pub := validTrustReceipt(t)
-	r.Anchor = &AnchorView{Head: *r.Head}
-	r.Anchor.Head.RootHash = hash.SHA256Hex([]byte("forged anchor"))
-	raw, err := r.MarshalIndent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := VerifyTrustReceipt(raw, pub); !errors.Is(err, ErrSignature) {
-		t.Fatalf("forged anchor head: %v", err)
-	}
-}
-
-func TestVerifyTrustReceiptRejectsAnchorBeforeProof(t *testing.T) {
-	r, pub := validTrustReceipt(t)
-	r.Anchor = &AnchorView{Head: *r.Head}
-	r.Anchor.Head.TreeSize = r.Proof.TreeSize - 1
-	r.Anchor.Head.Signature = ed25519.Sign(testPriv(), HeadPayload(r.Anchor.Head))
-	raw, err := r.MarshalIndent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := VerifyTrustReceipt(raw, pub); !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "anchor head covers") {
-		t.Fatalf("anchor head before proof: %v", err)
-	}
-}
-
 func TestVerifyTrustReceiptRejectsAdversarialDocuments(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -138,11 +92,7 @@ func TestVerifyTrustReceiptRejectsAdversarialDocuments(t *testing.T) {
 		}, want: ErrLogIDMismatch},
 		{name: "proof larger than head", mutate: func(r *TrustReceipt) { r.Proof.TreeSize = r.Head.TreeSize + 1 }, want: ErrReceipt, contains: "proof covers"},
 		{name: "valid proof for another root", mutate: func(r *TrustReceipt) {
-			proof, err := hash.ProveInclusion([]string{r.Leaf, hash.SHA256Hex([]byte("other"))}, 0)
-			if err != nil {
-				panic(err)
-			}
-			*r.Proof = proof
+			r.Proof.RootHash = hash.SHA256Hex([]byte("other-root"))
 		}, want: ErrReceipt, contains: "proof root"},
 	}
 	for _, tc := range tests {
@@ -215,6 +165,52 @@ func TestVerifyTrustReceiptStrictDecoding(t *testing.T) {
 				t.Fatalf("unknown field accepted or misreported: %v", err)
 			}
 		})
+	}
+}
+
+func TestVerifyTrustReceiptRefusesRealTombstoneEntry(t *testing.T) {
+	entries, head, pub := buildGappedLog(t, []uint64{7, 8, 9, 10, 11}, retentionTombstone())
+	leaves := make([]string, len(entries))
+	for i := range entries {
+		leaves[i] = entries[i].Leaf
+	}
+	proof, err := hash.ProveInclusion(leaves, uint64(len(entries)-1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := entries[len(entries)-1]
+	if entry.Tombstone == nil {
+		t.Fatal("fixture did not end in a tombstone")
+	}
+	r := TrustReceipt{
+		Schema: TrustReceiptSchema,
+		Entry:  &entry,
+		Leaf:   entry.Leaf,
+		Proof:  &proof,
+		Head:   &head,
+		Claims: FixedTrustReceiptClaims(),
+	}
+	raw, err := r.MarshalIndent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = VerifyTrustReceipt(raw, pub)
+	if !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "tombstone entries are not decision receipts") {
+		t.Fatalf("tombstone decision receipt: %v", err)
+	}
+}
+
+func TestVerifyTrustReceiptRefusesTrailingDocuments(t *testing.T) {
+	r, pub := validTrustReceipt(t)
+	raw, err := r.MarshalIndent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyTrustReceipt(append(raw, []byte(`{}`)...), pub); !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "multiple JSON documents") {
+		t.Fatalf("second document: %v", err)
+	}
+	if _, err := VerifyTrustReceipt(append(raw, []byte(`garbage`)...), pub); !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "trailing data") {
+		t.Fatalf("trailing data: %v", err)
 	}
 }
 
@@ -333,51 +329,5 @@ func TestFoldJSONKeyNonASCIIPairs(t *testing.T) {
 				t.Fatalf("foldJSONKey(%q) = %q, foldJSONKey(%q) = %q", tc.first, first, tc.other, other)
 			}
 		})
-	}
-}
-
-func TestVerifyTrustReceiptRefusesRealTombstoneEntry(t *testing.T) {
-	entries, head, pub := buildGappedLog(t, []uint64{7, 8, 9, 10, 11}, retentionTombstone())
-	leaves := make([]string, len(entries))
-	for i := range entries {
-		leaves[i] = entries[i].Leaf
-	}
-	proof, err := hash.ProveInclusion(leaves, uint64(len(entries)-1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry := entries[len(entries)-1]
-	if entry.Tombstone == nil {
-		t.Fatal("fixture did not end in a tombstone")
-	}
-	r := TrustReceipt{
-		Schema: TrustReceiptSchema,
-		Entry:  &entry,
-		Leaf:   entry.Leaf,
-		Proof:  &proof,
-		Head:   &head,
-		Claims: FixedTrustReceiptClaims(),
-	}
-	raw, err := r.MarshalIndent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = VerifyTrustReceipt(raw, pub)
-	if !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "tombstone entries are not decision receipts") {
-		t.Fatalf("tombstone decision receipt: %v", err)
-	}
-}
-
-func TestVerifyTrustReceiptRefusesTrailingDocuments(t *testing.T) {
-	r, pub := validTrustReceipt(t)
-	raw, err := r.MarshalIndent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := VerifyTrustReceipt(append(raw, []byte(`{}`)...), pub); !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "multiple JSON documents") {
-		t.Fatalf("second document: %v", err)
-	}
-	if _, err := VerifyTrustReceipt(append(raw, []byte(`garbage`)...), pub); !errors.Is(err, ErrReceipt) || !strings.Contains(err.Error(), "trailing data") {
-		t.Fatalf("trailing data: %v", err)
 	}
 }

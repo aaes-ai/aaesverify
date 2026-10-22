@@ -137,6 +137,16 @@ func TestUniqueJSONAndSafePaths(t *testing.T) {
 			t.Fatalf("accepted %s", raw)
 		}
 	}
+	for _, raw := range []string{`true`, `false`, `0`, `"scalar"`, `[]`, `null`} {
+		var object map[string]json.RawMessage
+		if err := decodeUnique([]byte(raw), &object); err == nil {
+			t.Fatalf("accepted non-object %s", raw)
+		}
+	}
+	var object map[string]json.RawMessage
+	if err := decodeUnique([]byte(`{"kept":1}`), &object); err != nil || string(object["kept"]) != "1" {
+		t.Fatalf("object capture: %v %#v", err, object)
+	}
 	for _, name := range []string{"../escape", "/absolute", "a\\b", "a\nb", "C:/drive", "."} {
 		if safePath(name) {
 			t.Fatalf("unsafe path accepted: %q", name)

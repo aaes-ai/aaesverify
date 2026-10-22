@@ -23,7 +23,7 @@ type verifyEvidence struct {
 // it names, the tree prefix it commits to, and the evidence riding on it. A
 // failed anchor is recorded and the walk moves on, so one Result can name
 // every bad anchor rather than only the first.
-func checkExportAnchor(exp *ExportFile, res *Result, opts VerifyOptions, key []byte, leaves []string, wantLogID string, i int, a AnchorView, independentSeen *witnessIdentities, ev *verifyEvidence) {
+func checkExportAnchor(exp *ExportFile, res *Result, opts VerifyOptions, key []byte, leaves []string, wantLogID string, i int, a AnchorView, independentSeen *witnessIdentities, ev *verifyEvidence, prefixes map[uint64]prefixFact) {
 	if err := VerifyTreeHead(a.Head, key, a.Algorithm); err != nil {
 		res.AnchorsOK = false
 		res.addError("anchor %d: %v", i, err)
@@ -54,10 +54,20 @@ func checkExportAnchor(exp *ExportFile, res *Result, opts VerifyOptions, key []b
 		res.addError("anchor %d: covers %d entries, log has %d", i, a.Head.TreeSize, len(leaves))
 		return
 	}
-	if prefixRoot := hash.MerkleRoot(leaves[:a.Head.TreeSize]); prefixRoot != a.Head.RootHash {
+	fact, ok := prefixes[a.Head.TreeSize]
+	if !ok || fact.root != a.Head.RootHash {
+		got := ""
+		if ok {
+			got = fact.root
+		}
 		res.AnchorsOK = false
 		res.addError("anchor %d: root %s is not the root of the first %d entries (%s)",
-			i, a.Head.RootHash, a.Head.TreeSize, prefixRoot)
+			i, a.Head.RootHash, a.Head.TreeSize, got)
+		return
+	}
+	if !fact.hasDecision || a.Head.Index != fact.lastDecision {
+		res.AnchorsOK = false
+		res.addError("anchor %d: head index is %d, prefix's last decision sequence is %d", i, a.Head.Index, fact.lastDecision)
 		return
 	}
 	// Independence is a claim about the FINAL published head: a witness
@@ -109,6 +119,17 @@ func checkAnchorTimestamp(i int, a AnchorView, res *Result, opts VerifyOptions, 
 // verifies but is tallied in ev.earlierPrefixWitnesses rather than counted as
 // independent evidence for the final head.
 func checkAnchorWitnesses(i int, a AnchorView, res *Result, key []byte, opts VerifyOptions, coversFinal bool, independentSeen *witnessIdentities, ev *verifyEvidence) {
+	checkAnchorWitnessesCore(i, a, res, coversFinal, independentSeen, ev, func(w WitnessView) bool {
+		return independentWitness(w, key, opts.TrustedWitnessKeys)
+	})
+}
+
+// checkAnchorWitnessesCore walks one anchor's witness countersignatures,
+// verifying each and counting the ones the caller's independence predicate
+// accepts. The v2/v3 and v4 paths share the walk and differ only in that
+// predicate: v4 excludes every authorised ledger key epoch by public-key
+// bytes (design section 4.7).
+func checkAnchorWitnessesCore(i int, a AnchorView, res *Result, coversFinal bool, independentSeen *witnessIdentities, ev *verifyEvidence, independent func(WitnessView) bool) {
 	for j, w := range a.Witnesses {
 		if len(w.Signature) == 0 {
 			continue
@@ -128,7 +149,7 @@ func checkAnchorWitnesses(i int, a AnchorView, res *Result, key []byte, opts Ver
 			ev.earlierPrefixWitnesses++
 			continue
 		}
-		if independentWitness(w, key, opts.TrustedWitnessKeys) && independentSeen.add(w.WitnessID, w.PublicKey) {
+		if independent(w) && independentSeen.add(w.WitnessID, w.PublicKey) {
 			res.IndependentWitnesses++
 		}
 	}

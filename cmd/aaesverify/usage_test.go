@@ -78,6 +78,7 @@ func TestUsageSubcommandVerdicts(t *testing.T) {
 		{"beside an export", []string{"usage", "--export", exportFixturePath(t), "--json", good}, 0, `"ok": true`},
 		{"unreadable export", []string{"usage", "--export", filepath.Join(t.TempDir(), "absent.jsonl"), good}, 2, "aaesverify:"},
 		{"export without a key", []string{"usage", "--export", emptyExport(t), good}, 2, "no readable ledger key"},
+		{"export that does not verify", []string{"usage", "--export", tamperedExport(t), good}, 1, "ledger key cannot be trusted"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +88,21 @@ func TestUsageSubcommandVerdicts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tamperedExport is the export fixture with one record hash altered: it still
+// names its ledger key, but the key's signatures no longer verify.
+func tamperedExport(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(exportFixturePath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "tampered.jsonl")
+	if err := os.WriteFile(path, bytes.Replace(raw, []byte(`"record_hash":"`), []byte(`"record_hash":"0`), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // emptyExport is the export fixture with every embedded public key removed:
@@ -138,5 +154,8 @@ func TestUsageReportReadIsBounded(t *testing.T) {
 	}
 	if _, code := captureRun(t, []string{"usage", path}); code != 2 {
 		t.Fatalf("oversized report exit %d, want 2", code)
+	}
+	if _, err := readUsageReport(t.TempDir()); err == nil {
+		t.Fatal("a directory read as a usage report")
 	}
 }

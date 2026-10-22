@@ -36,6 +36,10 @@ const (
 	UsageWarningsSuppressed  = "suppressed"
 	EnvironmentProduction    = "production"
 	EnvironmentNonProduction = "non_production"
+
+	// MaxUsageReportBytes bounds a caller-supplied usage report. The decoder
+	// refuses anything larger before it allocates the parsed value.
+	MaxUsageReportBytes = 16 << 20
 )
 
 // ErrUsageReport is wrapped by every usage report refusal.
@@ -194,8 +198,15 @@ func domainPayload(domain string, v any) ([]byte, error) {
 }
 
 // ParseUsageReport decodes a report strictly: an unknown field is refused,
-// because a field the signature check does not know is a field nobody signed.
+// because a field the signature check does not know is a field nobody signed,
+// and so is a member repeated exactly or under case folding.
 func ParseUsageReport(raw []byte) (UsageReport, error) {
+	if int64(len(raw)) > MaxUsageReportBytes {
+		return UsageReport{}, fmt.Errorf("%w: report exceeds the %d-byte size limit", ErrUsageReport, MaxUsageReportBytes)
+	}
+	if err := checkTypedJSONAliases(raw, UsageReport{}); err != nil {
+		return UsageReport{}, fmt.Errorf("%w: decode: %v", ErrUsageReport, err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var r UsageReport

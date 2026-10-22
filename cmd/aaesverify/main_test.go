@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,14 +132,14 @@ func TestRunWitnessTrustRejectsMalformedKey(t *testing.T) {
 }
 
 // TestRunAcceptsWitnessTrustFile proves a well-formed trust file loads and the
-// export still verifies: exit 0 and CONSISTENT when no independent witness signed it.
+// export still verifies. Without an independent countersignature the headline
+// is CONSISTENT, not PASS.
 func TestRunAcceptsWitnessTrustFile(t *testing.T) {
 	file := writeWitnessTrust(t, `{"witness-1": "`+fixturePubKeyHex(t)+`"}`)
 	out, code := captureRun(t, []string{
 		"--export", fixtureExport(t),
 		"--pubkey", fixturePubKeyPath(t),
 		"--witness-trust", file,
-		"--allow-pre-anchor",
 	})
 	if code != 0 || !strings.Contains(out, "CONSISTENT") {
 		t.Fatalf("verify with witness trust exited %d:\n%s", code, out)
@@ -168,23 +170,15 @@ func TestRunTamperedExportFailsVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tampered := string(raw)
-	const marker = `"root_hash":"`
-	idx := strings.Index(tampered, marker)
-	if idx < 0 {
+	tampered := strings.Replace(string(raw), `"root_hash":"3`, `"root_hash":"4`, 1)
+	if tampered == string(raw) {
 		t.Fatal("fixture did not contain a root_hash to tamper")
 	}
-	pos := idx + len(marker)
-	flip := byte('0')
-	if tampered[pos] == '0' {
-		flip = '1'
-	}
-	tampered = tampered[:pos] + string(flip) + tampered[pos+1:]
 	copy := filepath.Join(t.TempDir(), "tampered.jsonl")
 	if err := os.WriteFile(copy, []byte(tampered), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, code := captureRun(t, []string{"--export", copy, "--pubkey", fixturePubKeyPath(t), "--allow-pre-anchor"})
+	out, code := captureRun(t, []string{"--export", copy, "--pubkey", fixturePubKeyPath(t)})
 	if code != 1 {
 		t.Fatalf("tampered export exited %d, want 1:\n%s", code, out)
 	}
@@ -196,16 +190,16 @@ func TestRunTamperedExportFailsVerification(t *testing.T) {
 	}
 }
 
-// TestRenderVerifyReportsGaps covers the "OK with gaps" reading: a gapped but
+// TestRenderVerifyReportsMissingItems covers the "OK with gaps" reading: a gapped but
 // otherwise valid export passes with the gap count named.
-func TestRenderVerifyReportsGaps(t *testing.T) {
+func TestRenderVerifyReportsMissingItems(t *testing.T) {
 	res := &verifier.Result{
 		OK:   true,
 		Gaps: []verifier.GapView{{FromSequence: 3, ToSequence: 6}, {FromSequence: 9, ToSequence: 9}},
 	}
 	res.Gapped = true
 	out := renderVerify(res)
-	if !strings.Contains(out, "OK with gaps (2 range(s))") {
+	if !strings.Contains(out, "OK with gaps (2 range(s) removed under retention: 3..6, 9..9)") {
 		t.Fatalf("gapped result rendered as:\n%s", out)
 	}
 }
@@ -224,10 +218,7 @@ func TestVerdictAndKeySourceText(t *testing.T) {
 
 func TestRunRefusesPreAnchorWithoutOptIn(t *testing.T) {
 	path := writePreAnchorExport(t)
-	out, code := captureRun(t, []string{
-		"--export", path,
-		"--pubkey", fixturePubKeyPath(t),
-	})
+	out, code := captureRun(t, []string{"--export", path, "--pubkey", fixturePubKeyPath(t)})
 	if code != 1 {
 		t.Fatalf("pre_anchor without opt-in exited %d, want 1:\n%s", code, out)
 	}
@@ -236,48 +227,32 @@ func TestRunRefusesPreAnchorWithoutOptIn(t *testing.T) {
 	}
 }
 
-func TestRunVerifiesCurrentFixture(t *testing.T) {
-	for _, name := range []string{"export_v2.jsonl"} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(moduleDir(t), "testdata", name)
-			out, code := captureRun(t, []string{
-				"--export", path,
-				"--pubkey", fixturePubKeyPath(t),
-				"--allow-pre-anchor",
-			})
-			if code != 0 || !strings.Contains(out, "CONSISTENT") {
-				t.Fatalf("%s exited %d:\n%s", name, code, out)
-			}
-		})
+func TestRunAllowPreAnchorAcceptsUnanchoredExport(t *testing.T) {
+	path := writePreAnchorExport(t)
+	out, code := captureRun(t, []string{
+		"--export", path,
+		"--pubkey", fixturePubKeyPath(t),
+		"--allow-pre-anchor",
+	})
+	if code != 0 || !strings.Contains(out, "CONSISTENT") {
+		t.Fatalf("--allow-pre-anchor exited %d:\n%s", code, out)
 	}
 }
 
-func fixtureExport(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(moduleDir(t), "testdata", "export_v2.jsonl")
-}
-
-func fixturePubKeyPath(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(moduleDir(t), "testdata", "public_key.hex")
-}
-
-func fixturePubKeyHex(t *testing.T) string {
-	t.Helper()
-	raw, err := os.ReadFile(fixturePubKeyPath(t))
+func TestRunRejectsUnknownSchema(t *testing.T) {
+	raw, err := os.ReadFile(fixtureExport(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(raw))
-}
-
-func writeWitnessTrust(t *testing.T, content string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "witness.json")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	bad := strings.Replace(string(raw), `"schema":"aaes.export/v2"`, `"schema":"aaes.export/v99"`, 1)
+	path := filepath.Join(t.TempDir(), "unknown.jsonl")
+	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	out, code := captureRun(t, []string{"--export", path, "--pubkey", fixturePubKeyPath(t)})
+	if code != 1 || !strings.Contains(out, "unsupported export schema") {
+		t.Fatalf("unknown schema exited %d:\n%s", code, out)
+	}
 }
 
 func writePreAnchorExport(t *testing.T) string {
@@ -314,6 +289,97 @@ func writePreAnchorExport(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func fixturePubKeyHex(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(fixturePubKeyPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func writeWitnessTrust(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "witness.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRunVerifyErrorStillPrintsResult(t *testing.T) {
+	// Truncate after the header so verification fails closed with OK=false
+	// and still prints the JSON summary.
+	raw, err := os.ReadFile(fixtureExport(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nl := bytes.IndexByte(raw, '\n')
+	if nl < 0 {
+		t.Fatal("fixture has no newline")
+	}
+	path := filepath.Join(t.TempDir(), "short.jsonl")
+	if err := os.WriteFile(path, raw[:nl+1], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := captureRun(t, []string{"--export", path, "--pubkey", fixturePubKeyPath(t), "--json"})
+	if code == 0 {
+		t.Fatalf("truncated export exited 0:\n%s", out)
+	}
+	if !strings.Contains(out, `"ok": false`) && !strings.Contains(out, `"ok":false`) {
+		t.Fatalf("JSON summary missing ok:false:\n%s", out)
+	}
+}
+
+// refusingMarshal stands in for an encoder that fails: it returns the fallback
+// JSON MarshalResult emits on failure together with the error.
+func refusingMarshal(fallback string) func(*verifier.Result) ([]byte, error) {
+	return func(*verifier.Result) ([]byte, error) {
+		return []byte(fallback), errors.New("marshal refused")
+	}
+}
+
+func TestRunMarshalResultFallbackExitsNonZero(t *testing.T) {
+	marshal := refusingMarshal(`{"ok": false, "errors": ["internal: result encoding failed"]}`)
+	args := []string{"--export", fixtureExport(t), "--pubkey", fixturePubKeyPath(t), "--json"}
+	out, code := captureWith(t, args, func(a []string) int { return verifyExport(a, marshal) })
+	if code != 1 {
+		t.Fatalf("marshal fallback exit = %d, want 1:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"ok": false`) || !strings.Contains(out, "marshal refused") {
+		t.Fatalf("fallback JSON or encoder error missing:\n%s", out)
+	}
+}
+
+func TestRunMarshalResultFallbackOnNormalizeError(t *testing.T) {
+	marshal := refusingMarshal(`{"ok": false}`)
+	args := []string{"--export", filepath.Join(t.TempDir(), "missing.jsonl"), "--json"}
+	out, code := captureWith(t, args, func(a []string) int { return verifyExport(a, marshal) })
+	if code != 1 {
+		t.Fatalf("missing export with marshal fallback exit = %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "marshal refused") {
+		t.Fatalf("encoder error not reported:\n%s", out)
+	}
+}
+
+func TestRunRejectsRetiredSchemas(t *testing.T) {
+	raw, err := os.ReadFile(fixtureExport(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range []string{"aaes.export/v0", "aaes.export/v1"} {
+		path := filepath.Join(t.TempDir(), "retired.jsonl")
+		if err := os.WriteFile(path, bytes.Replace(raw, []byte("aaes.export/v2"), []byte(schema), 1), 0600); err != nil {
+			t.Fatal(err)
+		}
+		out, code := captureRun(t, []string{"--export", path, "--pubkey", fixturePubKeyPath(t), "--allow-pre-anchor"})
+		if code != 1 || !strings.Contains(out, "unsupported export schema") {
+			t.Fatalf("%s: %d %s", schema, code, out)
+		}
+	}
 }
 
 func TestVersionAndUnexpectedArguments(t *testing.T) {

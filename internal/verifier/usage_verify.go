@@ -149,6 +149,15 @@ func verifyUsageKeys(r UsageReport, ledgerKey []byte) (string, error) {
 	return root, nil
 }
 
+// VerifyUsageKeyRotations checks a rotation chain the way a report's is
+// checked: each statement signed by the key before it, each continuing the
+// one before, and the chain ending at endKeyID. The deployment runs it on its
+// own chain when it opens the usage key.
+func VerifyUsageKeyRotations(rotations []UsageKeyRotation, endKeyID string) error {
+	_, err := walkRotations(rotations, endKeyID)
+	return err
+}
+
 // walkRotations verifies each rotation statement, oldest first, and that the
 // chain ends at the signing key. It returns every previous key in the chain.
 func walkRotations(rotations []UsageKeyRotation, signingKeyID string) ([]ed25519.PublicKey, error) {
@@ -193,54 +202,6 @@ func verifyRotation(rot UsageKeyRotation) (ed25519.PublicKey, error) {
 		return nil, errors.New("not signed by the previous key")
 	}
 	return prev, nil
-}
-
-func verifyUsageSums(r UsageReport) error {
-	var sum UsageTotals
-	var errs []error
-	for _, t := range r.Tenants {
-		sum.GovernedDecisions += t.GovernedDecisions
-		sum.PermitRecords += t.PermitRecords
-		sum.RefusalRecords += t.RefusalRecords
-		sum.DeferralRecords += t.DeferralRecords
-		sum.ModelRecords += t.ModelRecords
-		if t.GovernedDecisions > t.Records() || (t.Records() > 0 && t.GovernedDecisions == 0) {
-			errs = append(errs, usageErr("tenant %s counts %d decisions from %d records", t.LogID, t.GovernedDecisions, t.Records()))
-		}
-		if t.Records() > 0 && (t.FirstSequence == 0 || t.FirstSequence > t.LastSequence) {
-			errs = append(errs, usageErr("tenant %s sequence range %d..%d", t.LogID, t.FirstSequence, t.LastSequence))
-		}
-	}
-	if sum != r.Totals {
-		errs = append(errs, usageErr("totals %+v are not the sum of the tenants %+v", r.Totals, sum))
-	}
-	if r.Capacity != nil {
-		errs = append(errs, verifyUsageCapacity(r, *r.Capacity)...)
-	}
-	return errors.Join(errs...)
-}
-
-func verifyUsageCapacity(r UsageReport, c UsageCapacity) []error {
-	var errs []error
-	inTerm := !r.Period.Start.Before(c.TermStart) && !r.Period.End.After(c.TermEnd)
-	switch {
-	case c.Pool != UsagePoolLicenseTerm || !c.TermStart.Before(c.TermEnd) || c.GovernedDecisions == 0:
-		errs = append(errs, usageErr("capacity names no license term pool"))
-	case c.UsedPercent != c.TermToDate*100/c.GovernedDecisions:
-		errs = append(errs, usageErr("used_percent %d is not term_to_date over the pool", c.UsedPercent))
-	case inTerm && c.TermToDate < r.Totals.GovernedDecisions:
-		errs = append(errs, usageErr("term_to_date %d is below the period's own count %d", c.TermToDate, r.Totals.GovernedDecisions))
-	case c.ProjectedTermTotal != nil && *c.ProjectedTermTotal < c.TermToDate:
-		errs = append(errs, usageErr("projection %d is below term_to_date %d", *c.ProjectedTermTotal, c.TermToDate))
-	}
-	wantWarnings := UsageWarningsActive
-	if r.Environment == EnvironmentNonProduction {
-		wantWarnings = UsageWarningsSuppressed
-	}
-	if c.Warnings != wantWarnings {
-		errs = append(errs, usageErr("warnings %q for a %s environment", c.Warnings, r.Environment))
-	}
-	return errs
 }
 
 func usagePublicKey(h string) (ed25519.PublicKey, error) {

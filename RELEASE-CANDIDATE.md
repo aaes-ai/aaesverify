@@ -1,8 +1,10 @@
-# v0.3.0-rc.1 release preparation
+# v0.3.0 release checks
 
-This is an unpublished candidate version. No tag availability or hosted release
-is asserted. It adds v3 exports, retained v2 reading, current record/2 re-sealing
-and binding, and the fixed evaluation-disclosure profile.
+v0.3.0 adds v3 exports, retained v2 reading, v4 reading under caller-pinned
+keys, trust-receipt verification, current record/2 re-sealing and binding, and
+the fixed evaluation-disclosure profile. It follows the `v0.3.0-rc.1`
+prerelease. This file lists the checks a release runs; the release page and
+its signed checksums record the result for each tag.
 
 `tools/check_cli.py` executes clean and negative v2/v3, sidecar-binding and
 synthetic-disclosure checks against the actual built binary. Each run generates
@@ -34,15 +36,16 @@ the external verification claim.
    checks. Keep exact source-revision and toolchain records.
 6. Review the exact public commit and candidate version, then tag and publish
    only with owner authorization. The workflow's publication job requires a
-   manual workflow dispatch, `publish_release=true`, and a version-tag ref.
+   manual workflow dispatch, `publish_release=true`, a version-tag ref and the
+   `release` environment, which must be configured to admit only `v*` tags.
+   The job signs `SHA256SUMS.txt` keyless with cosign, verifies the bundle
+   against the workflow identity and publishes the bundle with the release.
    Prereleases do not replace the latest stable release.
 7. Attach the reviewed suite distribution and its checksum/index metadata as
    separate release assets. Download and verify the published bytes, then align
    website links, hashes and compatibility labels in one deployment.
 
-The local release preparation reports checks completed and remaining gates.
-It does not create a tag, publish a release, configure hosted environment
-protection or establish independent attestation. The current histories report
+A release does not establish independent attestation. The current histories report
 CONSISTENT. Physical storage failures, receipt-write failures, existing-grant
 revocation, capture completeness and real external effects remain outside the
 suite. Receipt-chain seals and omitted proprietary source are not verified.

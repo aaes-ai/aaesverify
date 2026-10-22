@@ -113,10 +113,17 @@ func Verify(dir string, pin ed25519.PublicKey, options verifier.VerifyOptions) (
 	if err := exactInventory(dir, expected); err != nil {
 		return nil, err
 	}
+	var exportRaw, recordsRaw []byte
 	for name := range included {
 		data, err := read(name)
 		if err != nil {
 			return nil, err
+		}
+		switch name {
+		case "evidence/export.jsonl":
+			exportRaw = data
+		case "evidence/records.jsonl":
+			recordsRaw = data
 		}
 		sum := sha256.Sum256(data)
 		if man.Files[name] != hex.EncodeToString(sum[:]) {
@@ -136,22 +143,21 @@ func Verify(dir string, pin ed25519.PublicKey, options verifier.VerifyOptions) (
 	if !regexp.MustCompile(`^aaes\.local-provider/[1-9][0-9]*$`).MatchString(man.Provider) || man.Provider != configuration.Provider {
 		return nil, fmt.Errorf("simulator provider metadata mismatch or invalid version")
 	}
-	exportRaw, err := read("evidence/export.jsonl")
+	if exportRaw == nil || recordsRaw == nil {
+		return nil, fmt.Errorf("disclosed evaluation is missing the export or records sidecar")
+	}
+	parsedExport, err := verifier.LoadExportReader(bytes.NewReader(exportRaw))
 	if err != nil {
 		return nil, err
 	}
-	export := verifier.VerifyExportReaderResult(bytes.NewReader(exportRaw), key, options)
+	export := verifier.VerifyParsedExport(parsedExport, key, options)
 	if !export.OK {
 		return nil, fmt.Errorf("export verification failed: %v", export.Errors)
 	}
 	if export.Schema != verifier.ExportSchemaV3 {
 		return nil, fmt.Errorf("external evaluation profile requires a v3 export")
 	}
-	recordsRaw, err := read("evidence/records.jsonl")
-	if err != nil {
-		return nil, err
-	}
-	resealed, err := VerifyRecords(exportRaw, recordsRaw)
+	resealed, err := VerifyRecordsFile(parsedExport, recordsRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -264,15 +270,37 @@ func sameSet(values []string, expected map[string]bool) bool {
 	return true
 }
 
-// Reject duplicate object keys before typed decoding, including nested objects.
+// decodeUnique rejects duplicate object keys, including nested objects.
+// A map destination is filled by that one walk. A struct is unmarshaled
+// after the same walk.
 func decodeUnique(raw []byte, value any) error {
+	if object, ok := value.(*map[string]json.RawMessage); ok {
+		decoded, err := decodeUniqueObject(raw)
+		if err != nil {
+			return err
+		}
+		*object = decoded
+		return nil
+	}
+	if err := walkUniqueJSON(raw, nil); err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, value)
+}
+
+func decodeUniqueObject(raw []byte) (map[string]json.RawMessage, error) {
+	object := map[string]json.RawMessage{}
+	if err := walkUniqueJSON(raw, object); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+func walkUniqueJSON(raw []byte, capture map[string]json.RawMessage) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	var walk func() error
-	depth := 0
-	walk = func() error {
-		depth++
-		defer func() { depth-- }()
+	var walk func(depth int, captureHere bool) error
+	walk = func(depth int, captureHere bool) error {
 		if depth > 128 {
 			return fmt.Errorf("JSON nesting exceeds disclosure limit")
 		}
@@ -280,38 +308,84 @@ func decodeUnique(raw []byte, value any) error {
 		if err != nil {
 			return err
 		}
+		if token == nil {
+			if captureHere {
+				return fmt.Errorf("missing/null wire object")
+			}
+			return nil
+		}
 		delim, ok := token.(json.Delim)
 		if !ok {
+			if captureHere {
+				return fmt.Errorf("JSON object required")
+			}
 			return nil
 		}
 		if delim != '{' && delim != '[' {
 			return fmt.Errorf("unexpected JSON delimiter")
 		}
+		if captureHere && delim != '{' {
+			return fmt.Errorf("JSON object required")
+		}
 		seen := map[string]bool{}
 		for decoder.More() {
+			var key string
+			var start int
 			if delim == '{' {
 				token, err := decoder.Token()
 				if err != nil {
 					return err
 				}
-				key, ok := token.(string)
+				var ok bool
+				key, ok = token.(string)
 				if !ok || seen[key] {
 					return fmt.Errorf("duplicate or invalid JSON key: %v", token)
 				}
 				seen[key] = true
+				if captureHere {
+					start, err = jsonValueStart(raw, int(decoder.InputOffset()))
+					if err != nil {
+						return err
+					}
+				}
 			}
-			if err := walk(); err != nil {
+			if err := walk(depth+1, false); err != nil {
 				return err
+			}
+			if captureHere {
+				end := int(decoder.InputOffset())
+				if start < 0 || end > len(raw) || start > end {
+					return fmt.Errorf("JSON value bounds")
+				}
+				capture[key] = append(json.RawMessage(nil), bytes.TrimSpace(raw[start:end])...)
 			}
 		}
 		_, err = decoder.Token()
 		return err
 	}
-	if err := walk(); err != nil {
+	if err := walk(1, capture != nil); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return fmt.Errorf("trailing JSON data")
 	}
-	return json.Unmarshal(raw, value)
+	return nil
+}
+
+func jsonValueStart(raw []byte, afterKey int) (int, error) {
+	i := afterKey
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\n' || raw[i] == '\r') {
+		i++
+	}
+	if i >= len(raw) || raw[i] != ':' {
+		return 0, fmt.Errorf("JSON object colon")
+	}
+	i++
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\n' || raw[i] == '\r') {
+		i++
+	}
+	if i > len(raw) {
+		return 0, fmt.Errorf("JSON value bounds")
+	}
+	return i, nil
 }

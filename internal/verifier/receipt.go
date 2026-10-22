@@ -73,13 +73,13 @@ func VerifyReceipt(r ReceiptView, pubKey []byte) error {
 	if err := checkHeadLogID(*r.Head, hash.DeriveLogID(r.TenantID)); err != nil {
 		return err
 	}
-	if r.Proof.TreeSize > r.Head.TreeSize {
+	if r.Proof.TreeSize != r.Head.TreeSize {
 		return fmt.Errorf("%w: proof covers %d leaves, head covers %d", ErrReceipt, r.Proof.TreeSize, r.Head.TreeSize)
 	}
 	if r.Proof.RootHash != r.Head.RootHash {
 		return fmt.Errorf("%w: proof root %s, head root %s", ErrReceipt, r.Proof.RootHash, r.Head.RootHash)
 	}
-	if !hash.VerifyInclusion(r.Leaf, *r.Proof) {
+	if !hash.VerifyInclusionAgainst(r.Leaf, *r.Proof, *r.Head) {
 		return ErrInclusion
 	}
 	if r.Head.SignedAt.Before(r.IssuedAt) {

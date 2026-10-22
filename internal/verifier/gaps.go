@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -94,16 +95,19 @@ func coverMissingRanges(exp *ExportFile, usable []EntryView, res *Result) {
 // still holds entries in: the log was linked before the removal, so nothing is
 // missing, but the operator should see that the removal is not yet visible.
 func warnPartiallyRemovedRanges(exp *ExportFile, usable []EntryView, res *Result) {
+	present := make([]uint64, 0, len(exp.Entries))
+	for _, x := range exp.Entries {
+		if x.Tombstone == nil {
+			present = append(present, x.Sequence)
+		}
+	}
+	sort.Slice(present, func(i, j int) bool { return present[i] < present[j] })
 	for _, e := range usable {
 		t := e.Tombstone
-		present := 0
-		for _, x := range exp.Entries {
-			if x.Tombstone == nil && x.Sequence >= t.FromSequence && x.Sequence <= t.ToSequence {
-				present++
-			}
-		}
-		if present > 0 {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("tombstone at sequence %d names range %d..%d and the export still contains %d entry(ies) in it; the log was linked before the removal, so the removal is recorded but nothing is missing from this export", e.Sequence, t.FromSequence, t.ToSequence, present))
+		lo := sort.Search(len(present), func(i int) bool { return present[i] >= t.FromSequence })
+		hi := sort.Search(len(present), func(i int) bool { return present[i] > t.ToSequence })
+		if n := hi - lo; n > 0 {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("tombstone at sequence %d names range %d..%d and the export still contains %d entry(ies) in it; the log was linked before the removal, so the removal is recorded but nothing is missing from this export", e.Sequence, t.FromSequence, t.ToSequence, n))
 		}
 	}
 }

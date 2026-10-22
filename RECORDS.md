@@ -1,6 +1,6 @@
 # Current sealed-record verification profile
 
-The local candidate supports `--export FILE --records FILE --json` and uses the
+Since v0.3.0, aaesverify supports `--export FILE --records FILE --json` and uses the
 same reader in `--evaluation DIR`. The reader uses only the public verifier,
 public canonical hashing helpers and Go's standard library. It contains no
 platform journal, policy evaluator, producer binary or signing key.

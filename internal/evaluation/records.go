@@ -28,12 +28,19 @@ const recordStrings = "intent_hash decision_hash record_hash policy_bundle_id po
 type wireObject map[string]any
 
 func typedObject(raw json.RawMessage, groups map[string]string) (wireObject, error) {
-	var object map[string]json.RawMessage
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, fmt.Errorf("missing/null wire object")
 	}
+	var object map[string]json.RawMessage
 	if err := decodeUnique(raw, &object); err != nil {
 		return nil, err
+	}
+	return bindWire(object, groups)
+}
+
+func bindWire(object map[string]json.RawMessage, groups map[string]string) (wireObject, error) {
+	if object == nil {
+		return nil, fmt.Errorf("missing/null wire object")
 	}
 	out := wireObject{}
 	for kind, names := range groups {
@@ -208,7 +215,15 @@ func VerifyRecords(exportRaw, recordsRaw []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if export.Header.Schema != verifier.ExportSchemaV3 {
+	return VerifyRecordsFile(export, recordsRaw)
+}
+
+// VerifyRecordsFile binds a sidecar to an export that the caller already parsed.
+func VerifyRecordsFile(export *verifier.ExportFile, recordsRaw []byte) (int, error) {
+	if len(recordsRaw) > maxFileBytes {
+		return 0, fmt.Errorf("sidecar exceeds size limit")
+	}
+	if export == nil || export.Header.Schema != verifier.ExportSchemaV3 {
 		return 0, fmt.Errorf("sidecar profile requires v3 export")
 	}
 	records := map[string]sealedWire{}
@@ -228,7 +243,7 @@ func VerifyRecords(exportRaw, recordsRaw []byte) (int, error) {
 			return 0, fmt.Errorf("sidecar line type: %w", err)
 		}
 		if line == 1 {
-			h, err := typedObject(raw, map[string]string{"s": "type schema binds log_id tenant_id", "u": "entry_count"})
+			h, err := bindWire(probe, map[string]string{"s": "type schema binds log_id tenant_id", "u": "entry_count"})
 			if err != nil {
 				return 0, err
 			}
@@ -240,7 +255,7 @@ func VerifyRecords(exportRaw, recordsRaw []byte) (int, error) {
 		if typ != "record" && typ != "receipt" {
 			return 0, fmt.Errorf("unexpected sidecar line type %q", typ)
 		}
-		row, err := typedObject(raw, map[string]string{"s": "type record_hash", "u": "sequence", "raw": typ})
+		row, err := bindWire(probe, map[string]string{"s": "type record_hash", "u": "sequence", "raw": typ})
 		if err != nil {
 			return 0, err
 		}

@@ -1,8 +1,7 @@
-# Candidate verification profile — `aaes.export/v3`
+# Verification profile — `aaes.export/v3`
 
-This document specifies the candidate source in this checkout. Published
-v0.2.0 binaries read v2 only. No v3 binary release or deployment qualification
-is claimed. The [v2 specification](SPEC.md) continues to describe retained v2
+This document specifies v3 reading as released in v0.3.0. The v0.2.0 binaries
+read v2 only. No deployment qualification is claimed. The [v2 specification](SPEC.md) continues to describe retained v2
 evidence; the rules below state the precise differences.
 
 ## Signed algorithm
@@ -55,8 +54,8 @@ An embedded signing key still establishes internal consistency only.
 
 The published v0.2.0 binary predates this vocabulary and prints `PASS` for the
 synthetic witnessless v2 sample. Public download instructions identify that
-legacy behavior explicitly. Candidate source reports `CONSISTENT` for the
-same sample; a future release must publish matching binaries and provenance.
+legacy behavior explicitly. This release reports `CONSISTENT` for the
+same sample, and its release binaries carry checksums with a keyless signature.
 
 ## FIPS mode and certificate bindings
 
@@ -69,11 +68,14 @@ it does not certify a customer operating environment.
 
 ## Conformance evidence in this checkout
 
-`internal/store_versions/testdata/export_v3.jsonl` is a synthetic export made
-through the actual current producer with a public demonstration key. Go tests
-exercise the current producer/reader, preserved v2 fixture, authenticated
-algorithm mutation, invalid algorithms, verdict vocabulary, normalization and
-served console pack. Python JSON Schema tests validate both actual fixtures
-and refuse missing or unsupported v3 head algorithms. These tests establish
+In the AAES monorepo, `internal/store_versions/testdata/export_v3.jsonl` is a
+synthetic export made through the actual current producer with a public
+demonstration key; that fixture and the producer tests are not part of this
+checkout. Here, `tools/check_cli.py` generates a synthetic v3 export with a
+fresh key and runs the release binary against it. Go tests in this checkout
+exercise the reader on the preserved v2 fixture, authenticated algorithm
+mutation, invalid algorithms, the verdict vocabulary and normalization. The
+producer, served console pack and JSON Schema fixture tests run in the AAES
+monorepo and are not part of this checkout. These tests establish
 the scoped software behavior; they do not establish capture completeness,
 key provenance, customer independence or deployment acceptance.

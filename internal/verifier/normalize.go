@@ -18,10 +18,11 @@ const MaxExportBytes = 1 << 30
 var ErrUnsupportedSchema = errors.New("verifier: unsupported export schema")
 
 // NormalizeExportSchema maps a schema string to the supported version it
-// verifies as. ok is false for every retired or unknown identifier.
+// verifies as: the retained v2/v3 decision-entry schemas and v4's typed-leaf
+// schema. ok is false for every retired or unknown identifier.
 func NormalizeExportSchema(schema string) (canonical string, ok bool) {
 	switch schema {
-	case ExportSchemaV2, ExportSchemaV3:
+	case ExportSchemaV2, ExportSchemaV3, ExportSchemaV4:
 		return schema, true
 	}
 	return "", false

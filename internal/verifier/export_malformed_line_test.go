@@ -25,16 +25,18 @@ func TestLoadExportRefusesMalformedLines(t *testing.T) {
 			"unsupported export schema",
 		},
 		{
+			// The header schema is refused before ANY body line decodes
+			// (design section 6.1): the bad entry on line 2 is never read.
 			"v1 bad entry json after keys",
 			"{\"type\":\"header\",\"schema\":\"aaes.export/v1\",\"log_id\":\"l\",\"tenant_id\":\"t\",\"entry_count\":1}\n" +
 				"{\"type\":\"entry\",\"amount_usd\":1,\"tenant_id\":1}\n",
-			"line 2",
+			"unsupported export schema",
 		},
 		{
 			"unknown schema bad entry",
 			"{\"type\":\"header\",\"schema\":\"aaes.export/v9\",\"log_id\":\"l\",\"tenant_id\":\"t\",\"entry_count\":1}\n" +
 				"{not-json\n",
-			"line 2",
+			"unsupported export schema",
 		},
 		{
 			"duplicate header",

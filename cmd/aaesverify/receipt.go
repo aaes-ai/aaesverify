@@ -23,6 +23,7 @@ type trustReceiptResult struct {
 	ClaimsOK              bool     `json:"claims_ok,omitempty"`
 	AnchorPresent         bool     `json:"anchor_present"`
 	AnchorHeadSignatureOK bool     `json:"anchor_head_signature_ok,omitempty"`
+	AnchorMatchesHead     bool     `json:"anchor_matches_receipt_head"`
 	Verdict               string   `json:"verdict"`
 	Errors                []string `json:"errors,omitempty"`
 }
@@ -48,6 +49,7 @@ func runTrustReceipt(path string, pubKey []byte, jsonOnly bool) int {
 			res.ClaimsOK = true
 			res.AnchorPresent = receipt.Anchor != nil
 			res.AnchorHeadSignatureOK = res.AnchorPresent
+			res.AnchorMatchesHead = verifier.TrustReceiptAnchorMatchesHead(receipt)
 			res.Verdict = "CONSISTENT"
 		}
 	}
@@ -91,7 +93,12 @@ func renderTrustReceipt(res *trustReceiptResult) string {
 		line("head signature", fmt.Sprintf("%s (against supplied public key; key provenance not verified)", verdict(res.HeadSignatureOK)))
 		line("claims", fmt.Sprintf("%s (decision commitment only; no execution or completeness claim)", verdict(res.ClaimsOK)))
 		if res.AnchorPresent {
-			line("anchor", fmt.Sprintf("present, head signature %s, witnesses not checked", verdict(res.AnchorHeadSignatureOK)))
+			line("anchor", fmt.Sprintf("present, head signature %s; witnesses and timestamps not checked", verdict(res.AnchorHeadSignatureOK)))
+			if res.AnchorMatchesHead {
+				line("anchor binding", "same tree state as the receipt proof")
+			} else {
+				line("anchor binding", "different tree state; receipt inclusion and append-only consistency under this anchor not verified")
+			}
 		} else {
 			line("anchor", "absent")
 		}

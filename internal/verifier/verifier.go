@@ -39,6 +39,17 @@ var (
 	// the export's tenant. The head — and every witness countersignature over
 	// it — belongs to a different log, whatever its signature says.
 	ErrLogIDMismatch = errors.New("verifier: tree head log_id does not match the export's tenant")
+	// ErrUnknownKeyID reports a v4 head reference (the header's signing_key_id
+	// or an anchor's key_id) that the caller-pinned keyring does not contain.
+	// It is an error, never a head to skip silently (design section 4.7).
+	ErrUnknownKeyID = errors.New("verifier: key id is not in the caller-pinned keyring")
+	// ErrTrustConfig reports an invalid caller trust context: conflicting
+	// freshness modes, or a ledger keyring and trusted-witness pin set that
+	// overlap by public-key bytes when independence is requested.
+	ErrTrustConfig = errors.New("verifier: invalid trust configuration")
+	// ErrEquivocation reports two different roots at the same tree size in one
+	// logical log — a forked history, not a newer state (design section 6.4).
+	ErrEquivocation = errors.New("verifier: two heads name one tree size with different roots")
 )
 
 // EntryView is one transparency-log entry as an exporter published it. The

@@ -1,4 +1,4 @@
-> The v2 verification profile, first published with v0.2.0 and read by this candidate. Since v0.2.0, section 8.2 requires RFC 5816 signed attributes on timestamp tokens, and section 6's head algorithm is refused on every schema; the [changelog](CHANGELOG.md) lists both. Candidate source also supports authenticated-head v3 exports; see [SPEC-V3.md](SPEC-V3.md). No new public binary release is claimed.
+> The v2 verification profile, first published with v0.2.0 and still read by v0.3.0. Since v0.2.0, section 8.2 requires RFC 5816 signed attributes on timestamp tokens, and section 6's head algorithm is refused on every schema; the [changelog](CHANGELOG.md) lists both. v0.3.0 also reads authenticated-head v3 exports; see [SPEC-V3.md](SPEC-V3.md).
 
 # Open verification specification — `aaes.export/v2`
 
@@ -8,10 +8,14 @@ regulator's examiner, a witness operator — who must be able to verify AAES
 evidence **without trusting AAES**, including by reimplementing the checks in
 another language.
 
-This specification describes the current wire format and the checks a second
-implementation must reproduce. It is not an assessment or certification.
-Only `aaes.export/v2` is supported. Retired v0/v1 exports must be regenerated
-from the original journal using the current writer, never relabelled.
+This specification describes the `aaes.export/v2` wire format and the checks a
+second implementation must reproduce. It is not an assessment or certification.
+This release also reads `aaes.export/v3`, which
+[SPEC-V3.md](SPEC-V3.md) describes as a set of differences from this document,
+and `aaes.export/v4`, which no public specification covers yet (section 6.2
+states how a v4 file is keyed and reported). Retired v0/v1 exports must be
+regenerated from the original journal using the current writer, never
+relabelled.
 
 Every rule below names the source file that implements it. Where this document
 and the code disagree, **report the discrepancy as a defect so the
@@ -205,12 +209,22 @@ A tree head (`hash.TreeHead`) is a signed commitment to one log state:
 
 | Field | JSON name | In signed payload |
 |---|---|---|
+| algorithm | `algorithm` | yes when present; omitted when empty. Historical v2 heads may omit it; a v3 head must carry `"ed25519"` (SPEC-V3.md), and any other value is refused on every schema |
+| schema | `schema` | yes when present; omitted when empty. v2 and v3 heads omit it, and a v2 or v3 export whose header head or anchor head names a schema is refused as relabelled; a v4 head carries `"aaes.export/v4"` |
 | log id | `log_id` | yes — always present, never omitted |
 | index | `index` | yes — equals the last entry's sequence |
 | root hash | `root_hash` | yes |
 | tree size | `tree_size` | yes — equals the entry count |
 | signed at | `signed_at` | yes |
+| pre-anchor flag | `pre_anchor` | yes when true; omitted when false (section 11) |
 | signature | `signature` | **no** — omitted from the payload |
+
+The payload is the `CJSON` of every member above except `signature`, so the
+three optional members change the signed bytes whenever they are present. A
+reimplementation that drops `algorithm`, `schema` or `pre_anchor` before
+hashing computes the wrong payload for every v3 head and every head that
+signs `pre_anchor`. The field order inside the payload follows `CJSON`
+(sorted keys), not this table.
 
 ```
 head_payload = CJSON(head with signature removed)
@@ -262,6 +276,17 @@ rules (`verifier/export_verify.go`, `resolveKey`):
 - Neither: `ErrNoPublicKey`; `signature_ok` is false. Reporting a signature
   check as passed when no check ran is the same class of error as an unsealed
   receipt.
+
+An `aaes.export/v4` file resolves each head through a keyring of key ids
+(`--keyring`, `verifier/export_v4_keyring.go`). A single `--pubkey` becomes
+a one-entry keyring under the header's `signing_key_id`, and the same
+mismatch rule applies: an embedded key that differs from the supplied one is
+`ErrKeyMismatch`, and a supplied key that is not the keyring's entry for
+`signing_key_id` is a trust-configuration error. A v4 result is reported
+with a scoped verdict. Without `--expected-final` (the exact final head the
+examiner expects) it is at most `UNPINNED_CONSISTENCY`; only a verified
+expected final head can produce `PASS` or `CONSISTENT`. The human summary
+prints the same verdict as the JSON.
 
 ## 7. Anchors: timestamps and witnesses
 
@@ -557,6 +582,13 @@ two must not disagree.
   "pre_anchor"(optional)}`.
   A duplicate, misplaced or absent header is malformed; an unknown `type` is
   malformed.
+- A line whose object, at any depth, repeats a member name is malformed. Two
+  names count as the same member when they are equal or when they name the
+  same field under `encoding/json`'s case-insensitive matching (Unicode
+  simple case folding), for example `actor_id` and `Actor_ID`. Go keeps the
+  last spelling while most other JSON readers keep the first, so accepting
+  both would let a file hash one value and display another
+  (`verifier/export_legacy_parse.go`, `json_members.go`).
 - One **entry line** per entry, in sequence order: `{"type":"entry",` the
   supported preimage fields `,"chain_hash":"…","leaf":"…"}`. `chain_hash` and
   `leaf` are the exporter's **claims**; the verifier recomputes both from the
@@ -660,8 +692,10 @@ witness keys, it:
 
 **Heads and anchors**
 
-- [ ] Builds `head_payload` as `CJSON` of the head minus `signature`, verifies
-      Ed25519 over it, and refuses wrong key/signature lengths.
+- [ ] Builds `head_payload` as `CJSON` of the head minus `signature`,
+      including `algorithm`, `schema` and `pre_anchor` whenever they are
+      present (section 6), verifies Ed25519 over it, and refuses wrong
+      key/signature lengths.
 - [ ] Requires every signed head's `log_id` to be non-empty and equal to
       `DeriveLogID(tenant_id)`, and every entry's tenant to equal the
       header's.
@@ -690,6 +724,8 @@ witness keys, it:
 - [ ] Enforces the export's structural rules (single first header, known line
       types, entry count, 4 MiB line bound) and treats unknown line types as
       malformed.
+- [ ] Refuses a line that repeats a member name, exactly or under
+      case-insensitive matching, at any depth (section 11).
 - [ ] Applies the tombstone rules of section 10: a missing range without a
       well-formed tombstone is a failure, not a gap.
 - [ ] Reports shredded fields and key-destruction records as warnings, never
@@ -726,24 +762,28 @@ The synthetic sample's publicly reproducible key is not a production trust root.
 
 Exit codes: 0 means integrity passed (including gap or shredded-field warnings);
 1 means refusal or a failed check, including an unsatisfied independence policy;
-2 means usage or trust-file loading failure. In export mode, omitting `--pubkey`
-uses the embedded key and prints an internal-consistency warning. That key cannot
-authenticate its own origin; supply `--pubkey` from a separately trusted channel
-for deployment evidence. Its single signing-key CLI fails closed on rotated-key
-history requiring another key.
+2 means usage or trust-file loading failure. Omitting `--pubkey` uses the embedded key and prints an internal-consistency
+warning. That key cannot authenticate its own origin; supply `--pubkey` from a
+separately trusted channel for deployment evidence. A single
+`--pubkey` fails closed on rotated-key history requiring another key; a v4
+export takes `--keyring` for that. The CLI also verifies trust receipts
+(`--receipt`), binds a record/2 sidecar to an export (`--records`, see
+[RECORDS.md](RECORDS.md)) and checks a disclosed evaluation directory
+(`--evaluation`, see [EVALUATION-DISCLOSURE.md](EVALUATION-DISCLOSURE.md)).
+Operator proof and inspection commands belong to the separate AAES platform
+tools.
 
 Receipt mode requires `--pubkey` and verifies `aaes.trust-receipt/v1` documents.
 A successful check reports `CONSISTENT`: the decision record was committed to
 the signed log under the supplied key. It does not prove execution or completeness
 of the record set. A receipt does not show that the record was not later removed.
-For a present anchor, the head signature is checked against the supplied key and
-the head tree size must be at least the inclusion proof's tree size. Anchor
-witnesses and timestamps are not checked in receipt mode. Receipt mode does not
-check the full chain; use full export verification for chain-wide checks and
-independent evidence. Receipt mode performs no layout or ordering checks, which
-are not well-defined for compacted logs; ordering claims require full export
-verification. Sidecar-to-record binding and operator proof/inspection commands
-belong to the separate AAES platform tools.
+A carried anchor head must verify under the supplied key, name the same log and
+cover the receipt's leaf index; at the receipt head's tree size it must equal
+that head. Anchor witnesses and timestamps are not checked in receipt mode.
+Receipt mode does not check the full chain; use full export verification for
+chain-wide checks and independent evidence. Receipt mode performs no layout or
+ordering checks, which are not well-defined for compacted logs; ordering claims
+require full export verification.
 
 ## 15. Source of truth
 
@@ -754,19 +794,24 @@ belong to the separate AAES platform tools.
 | Entry preimage | `internal/verifier/verifier.go` |
 | Head payload and signature | `internal/verifier/chain.go` |
 | Export parse and verification | `internal/verifier/export.go`, `export_verify.go`, `export_anchor.go` |
-| Trust-receipt verification | `internal/verifier/trust_receipt.go`, `cmd/aaesverify/receipt.go` |
 | Gaps and shredding reports | `internal/verifier/gaps.go`, `shredding.go` |
 | RFC 3161 token checks | `internal/verifier/timestamp.go`, `internal/verifier/timestamp_cms.go` |
 | Witness pinning and independence | `internal/verifier/witness_identity.go`, `independence.go` |
-| CLI and trust-file parsing | `cmd/aaesverify/main.go` |
+| Trust-receipt verification | `internal/verifier/trust_receipt.go`, `cmd/aaesverify/receipt.go` |
+| Human summary and v4 trust files | `internal/verifytext/text.go`, `trust.go` |
+| CLI and trust-file parsing | `cmd/aaesverify/main.go`, `modes.go` |
 
 Producer paths mentioned elsewhere are provenance references to the separate
 platform implementation, not dependencies of this public checkout.
 
-Cross-package agreement is test-enforced where it matters: preimage
-(`TestVerifierAgreesOnEntryPreimage`), head payload
-(`TestVerifierAgreesOnHeadPayload`), tree construction
-(`TestTreeMatchesHashMerkleRoot`, sizes 1–512), the `enc:v1:` marker
-(`TestVerifierMarkerAgreement`), and the verifier's import closure. A drift
-between producer and verifier is a build failure, not a silent fork — and a
-drift between this document and either is a defect to report.
+Producer agreement is tested in the AAES monorepo, where the producer and
+this verifier build together: preimage (`TestVerifierAgreesOnEntryPreimage`),
+head payload (`TestVerifierAgreesOnHeadPayload`), tree construction
+(`TestTreeMatchesHashMerkleRoot`, sizes 1–512) and the `enc:v1:` marker
+(`TestVerifierMarkerAgreement`). Those tests import producer packages, so
+they are not part of this checkout. Here, `preimage_golden_test.go` checks
+producer-generated golden bytes and the import-closure tests run as usual.
+The monorepo copies `internal/hash`, the `internal/types` subset,
+`internal/verifier`, `internal/verifytext` and `cmd/aaesverify` into this
+tree with `sync.sh`, whose `--check` mode fails on any drift. A drift between
+this document and the code is a defect to report.

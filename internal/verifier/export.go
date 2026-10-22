@@ -39,7 +39,19 @@ type ExportFile struct {
 	Path    string
 	Header  HeaderView
 	Entries []EntryView
-	Anchors []AnchorView
+	// Receipts carries the v4 typed receipt leaves (design section 4.5). It
+	// is empty for v2/v3 exports; the v4 line reader populates it. The
+	// evidencepack companion binding consumes it for the section 7.4
+	// comparison projection.
+	Receipts []ReceiptLeafViewV4
+	// Approvals and Summaries carry the v4 approval-state and summary leaves
+	// (design sections 4.6 and 5). LeavesV4 is every leaf-bearing line in
+	// file order — entries included — because the v4 chain and Merkle root
+	// cover every leaf type in that order (design section 4.3).
+	Approvals []ApprovalLeafViewV4
+	Summaries []SummaryLeafViewV4
+	LeavesV4  []LeafV4
+	Anchors   []AnchorView
 }
 
 // HeaderView is the export header line.
@@ -52,6 +64,11 @@ type HeaderView struct {
 	EntryCount         uint64        `json:"entry_count"`
 	Head               hash.TreeHead `json:"head"`
 	PublicKey          string        `json:"public_key,omitempty"`
+	// LeafCount and SigningKeyID are v4-only header members (design section
+	// 4.1): the count of every leaf-bearing line, and the required keyring
+	// reference the final head resolves through. Both are absent in v2/v3.
+	LeafCount    uint64 `json:"leaf_count,omitempty"`
+	SigningKeyID string `json:"signing_key_id,omitempty"`
 	// PreAnchor is the honest flag for an export written before the first
 	// anchor interval. Without it, an anchorless export fails: the format
 	// supports anchors, so their absence is incomplete evidence rather than a
@@ -135,13 +152,31 @@ func LoadExport(path string) (*ExportFile, error) {
 	return exp, nil
 }
 
-// LoadExportReader parses an exported JSONL log.
+// exportByteCounter counts bytes read so LoadExportReader can refuse a stream
+// larger than MaxExportBytes. The limit reader stops one byte past the cap.
+type exportByteCounter struct {
+	r io.Reader
+	n int64
+}
+
+func (c *exportByteCounter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// LoadExportReader parses an exported JSONL log. The header's schema member
+// fixes the decoder for the WHOLE file before any body line is read (design
+// section 6.1): an unknown or retired schema fails immediately with ErrSchema,
+// and a v4 header switches every following line to the strict v4 rules.
 func LoadExportReader(r io.Reader) (*ExportFile, error) {
-	sc := bufio.NewScanner(r)
+	counted := &exportByteCounter{r: io.LimitReader(r, MaxExportBytes+1)}
+	sc := bufio.NewScanner(counted)
 	sc.Buffer(make([]byte, 0, 64<<10), MaxLineBytes)
 	exp := &ExportFile{}
 	lineNo := 0
 	sawHeader := false
+	sawAnchor := false
 	for sc.Scan() {
 		lineNo++
 		raw := bytes.TrimSpace(sc.Bytes())
@@ -154,99 +189,42 @@ func LoadExportReader(r io.Reader) (*ExportFile, error) {
 		if err := json.Unmarshal(raw, &probe); err != nil {
 			return nil, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
 		}
-		switch probe.Type {
-		case lineHeader:
-			hdr, err := decodeHeaderLine(raw, sawHeader, lineNo)
+		if probe.Type == "" {
+			return nil, fmt.Errorf("%w: line %d: missing type discriminator", ErrMalformed, lineNo)
+		}
+		if !sawHeader {
+			if probe.Type != lineHeader {
+				return nil, fmt.Errorf("%w: line %d: header must be the first line", ErrMalformed, lineNo)
+			}
+			hdr, err := decodeHeaderFirst(raw, lineNo)
 			if err != nil {
 				return nil, err
 			}
 			sawHeader = true
 			exp.Header = hdr
-		case lineEntry:
-			if !sawHeader {
-				return nil, fmt.Errorf("%w: line %d: header must be the first line", ErrMalformed, lineNo)
-			}
-			entry, err := decodeEntryLine(raw, exp.Header.Schema, lineNo)
-			if err != nil {
+			continue
+		}
+		if probe.Type == lineHeader {
+			return nil, fmt.Errorf("%w: line %d: duplicate header", ErrMalformed, lineNo)
+		}
+		if exp.Header.Schema == ExportSchemaV4 {
+			if err := exp.decodeBodyLineV4(raw, probe.Type, lineNo, &sawAnchor); err != nil {
 				return nil, err
 			}
-			exp.Entries = append(exp.Entries, entry)
-		case lineAnchor:
-			if !sawHeader {
-				return nil, fmt.Errorf("%w: line %d: header must be the first line", ErrMalformed, lineNo)
-			}
-			a, err := decodeAnchorLine(raw, lineNo)
-			if err != nil {
-				return nil, err
-			}
-			exp.Anchors = append(exp.Anchors, a)
-		case "":
-			return nil, fmt.Errorf("%w: line %d: missing type discriminator", ErrMalformed, lineNo)
-		default:
-			return nil, fmt.Errorf("%w: line %d: unknown line type %q", ErrMalformed, lineNo, probe.Type)
+			continue
+		}
+		if err := decodeLegacyBodyLine(exp, raw, probe.Type, lineNo); err != nil {
+			return nil, err
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("%w: read export: %v", ErrMalformed, err)
 	}
+	if counted.n > MaxExportBytes {
+		return nil, fmt.Errorf("export exceeds the %d-byte size limit", MaxExportBytes)
+	}
 	if !sawHeader {
 		return nil, fmt.Errorf("%w: no header line", ErrMalformed)
 	}
 	return exp, nil
-}
-
-func decodeHeaderLine(raw []byte, sawHeader bool, lineNo int) (HeaderView, error) {
-	if sawHeader {
-		return HeaderView{}, fmt.Errorf("%w: line %d: duplicate header", ErrMalformed, lineNo)
-	}
-	var line exportLine
-	if err := json.Unmarshal(raw, &line); err != nil {
-		return HeaderView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
-	}
-	hdr := HeaderView{
-		SignatureAlgorithm: line.SignatureAlgorithm,
-		Schema:             line.Schema,
-		LogID:              line.LogID,
-		TenantID:           line.TenantID,
-		ExportedAt:         line.ExportedAt,
-		EntryCount:         line.EntryCount,
-		PublicKey:          line.PublicKey,
-		PreAnchor:          line.PreAnchor,
-	}
-	if line.Head != nil {
-		hdr.Head = *line.Head
-	}
-	return hdr, nil
-}
-
-func decodeAnchorLine(raw []byte, lineNo int) (AnchorView, error) {
-	var line exportLine
-	if err := json.Unmarshal(raw, &line); err != nil {
-		return AnchorView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
-	}
-	a := AnchorView{KeyID: line.KeyID, Algorithm: line.Algorithm, Timestamp: line.Timestamp, Witnesses: line.Witnesses}
-	if line.Head != nil {
-		a.Head = *line.Head
-	}
-	return a, nil
-}
-
-// decodeEntryLine reads only the current wire format. Retired schemas and
-// the legacy floating-point amount field fail closed, including mixed layouts.
-func decodeEntryLine(raw []byte, schema string, lineNo int) (EntryView, error) {
-	if schema != ExportSchemaV2 && schema != ExportSchemaV3 {
-		return EntryView{}, fmt.Errorf("%w: line %d: %q; re-export as %s", ErrSchema, lineNo, schema, ExportSchema)
-	}
-	// One decode serves both checks. A syntax error populates nothing, so it
-	// still reports as malformed; a type error elsewhere on a line that also
-	// carries amount_usd still reports the retired field first.
-	var line exportLine
-	err := json.Unmarshal(raw, &line)
-	if line.AmountUSD != nil {
-		return EntryView{}, fmt.Errorf("%w: line %d: legacy amount_usd is not valid in %s", ErrSchema, lineNo, schema)
-	}
-	if err != nil {
-		return EntryView{}, fmt.Errorf("%w: line %d: %v", ErrMalformed, lineNo, err)
-	}
-	return line.EntryView, nil
 }

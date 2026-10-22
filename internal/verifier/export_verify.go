@@ -60,6 +60,24 @@ func VerifyExportReaderWithTrust(r io.Reader, pubKey []byte, tsaRoots *x509.Cert
 }
 
 func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
+	if err := checkExpectedSchemaV4(exp, opts); err != nil {
+		return refusedResult(exp, err)
+	}
+	if exp.Header.Schema == ExportSchemaV4 {
+		// The v4 trust inputs live in VerifyOptions (keyring, expected
+		// logical-log identity, freshness pin). A single caller key becomes
+		// a one-entry keyring; it is never ignored in favour of the
+		// embedded key.
+		v4opts, err := callerKeyOptionsV4(exp, pubKey, opts)
+		if err != nil {
+			return refusedResult(exp, err)
+		}
+		return verifyParsedV4(exp, v4opts)
+	}
+	return verifyParsedLegacy(exp, pubKey, opts)
+}
+
+func verifyParsedLegacy(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 	res := &Result{
 		OK:                 true,
 		Schema:             exp.Header.Schema,
@@ -117,10 +135,11 @@ func verifyParsed(exp *ExportFile, pubKey []byte, opts VerifyOptions) *Result {
 
 	res.AnchorsOK = true
 	leaves := st.leaves
+	prefixes := exportPrefixFacts(exp, leaves, st.recomputed)
 	ev := &verifyEvidence{}
 	independentSeen := witnessIdentities{}
 	for i, a := range exp.Anchors {
-		checkExportAnchor(exp, res, opts, key, leaves, wantLogID, i, a, &independentSeen, ev)
+		checkExportAnchor(exp, res, opts, key, leaves, wantLogID, i, a, &independentSeen, ev, prefixes)
 	}
 
 	appendHonestyWarnings(res, opts, ev)
@@ -153,6 +172,7 @@ func checkHeader(exp *ExportFile, res *Result) string {
 	if exp.Header.Schema == ExportSchemaV3 {
 		checkV3HeadAlgorithms(exp, res)
 	}
+	checkLegacyHeadSchemas(exp, res)
 	if uint64(len(exp.Entries)) != exp.Header.EntryCount {
 		res.addError("header declares %d entries, file contains %d", exp.Header.EntryCount, len(exp.Entries))
 	}

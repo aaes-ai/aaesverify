@@ -2,9 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/aaes-ai/aaesverify/internal/verifier"
 	"strings"
 	"testing"
+
+	"github.com/aaes-ai/aaesverify/internal/verifier"
 )
 
 func TestShreddedExportDoesNotRenderAnOrdinarySuccess(t *testing.T) {
@@ -14,7 +15,7 @@ func TestShreddedExportDoesNotRenderAnOrdinarySuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := renderVerify(result)
-	if !strings.Contains(rendered, "OK WITH SHREDDED FIELDS") {
+	if !strings.Contains(rendered, "OK with shredded fields (1 key destruction(s) recorded; 0 entries carry encrypted identifiers)") {
 		t.Fatalf("shred headline hidden: %s", rendered)
 	}
 }
